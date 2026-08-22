@@ -305,7 +305,7 @@ def action_instruction(root: Path, action_id: str) -> str:
     repository wins, because that is the file the writer edits; the one shipped
     with Prosview stands in until they change it.
     """
-    own = _skill_body(root / "skills" / action_id / "SKILL.md")
+    own = _skill_body(root / cfg.skills_path / action_id / "SKILL.md")
     return own or default_skill_body(action_id)
 
 
@@ -321,7 +321,7 @@ def install_default_skills(root: Path, already: Iterable[str] = ()) -> list[str]
         action_id = source.parent.name
         if action_id in seen:
             continue
-        target = root / "skills" / action_id
+        target = root / cfg.skills_path / action_id
         if (target / "SKILL.md").exists():
             installed.append(action_id)
             continue

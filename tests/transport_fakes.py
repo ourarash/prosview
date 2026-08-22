@@ -60,7 +60,7 @@ class CodexFakeClient:
     def request(self, method, params, *, timeout=None):
         if method == "skills/list":
             return {"data": [{"cwd": params["cwds"][0], "skills": [{
-                "name": "scene-review", "path": "/skills/scene-review/SKILL.md", "enabled": True,
+                "name": "scene-review", "path": "/.proseview/skills/scene-review/SKILL.md", "enabled": True,
                 "description": "Review a scene", "interface": {"displayName": "Scene Review", "shortDescription": "Review selected prose"},
             }]}]}
         if method == "thread/read":

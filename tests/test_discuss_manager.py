@@ -387,9 +387,9 @@ def test_first_run_offers_the_default_skills_to_the_repository(tmp_path: Path, m
     manager = DiscussManager(root, client_factory=fake_factory)
 
     shipped = {path.parent.name for path in (Path(discuss_module.__file__).parent / "skills").glob("*/SKILL.md")}
-    installed = {path.parent.name for path in (root / "skills").glob("*/SKILL.md")}
+    installed = {path.parent.name for path in (root / ".proseview/skills").glob("*/SKILL.md")}
     assert shipped and shipped == installed
-    assert "Quick critique" not in (root / "skills" / "quick_critique" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Quick critique" not in (root / ".proseview/skills" / "quick_critique" / "SKILL.md").read_text(encoding="utf-8")
     manager.close()
 
 
@@ -398,7 +398,7 @@ def test_a_writers_own_skill_is_what_the_button_sends(tmp_path: Path, monkeypatc
     clients: list[_FakeClient] = []
     root = _repo(tmp_path)
     manager = DiscussManager(root, client_factory=lambda callback, _agent=None: clients.append(_FakeClient(callback)) or clients[-1])
-    (root / "skills" / "quick_critique" / "SKILL.md").write_text(
+    (root / ".proseview/skills" / "quick_critique" / "SKILL.md").write_text(
         "---\nname: quick_critique\n---\n\nRead this like a hostile reviewer.\n", encoding="utf-8"
     )
     cid = manager.open({"kind": "scene", "path": "one.md"})["conversation_id"]
@@ -418,7 +418,7 @@ def test_a_deleted_skill_is_not_reinstalled_on_the_next_run(tmp_path: Path, monk
     root = _repo(tmp_path)
     DiscussManager(root, client_factory=fake_factory).close()
 
-    removed = root / "skills" / "pacing_tension"
+    removed = root / ".proseview/skills" / "pacing_tension"
     for path in sorted(removed.rglob("*"), reverse=True):
         path.unlink() if path.is_file() else path.rmdir()
     removed.rmdir()
@@ -464,7 +464,7 @@ def test_managed_skill_is_discovered_and_sent_as_a_real_skill_input(tmp_path: Pa
     )
     _wait_for(lambda: bool(clients[0].turn_params))
     assert clients[0].turn_params[0]["input"][1] == {
-        "type": "skill", "name": "scene-review", "path": "/skills/scene-review/SKILL.md"
+        "type": "skill", "name": "scene-review", "path": "/.proseview/skills/scene-review/SKILL.md"
     }
     manager.close()
 

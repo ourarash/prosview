@@ -21,8 +21,8 @@ manuscript_path: manuscript/
 # Where character bios live. Default: story-bible/characters
 characters_path: story-bible/characters
 
-# Where AI skill prompts live. Default: skills
-skills_path: skills
+# Where AI skill prompts live. Default: .proseview/skills
+skills_path: .proseview/skills
 
 # Word-count goal for the finished book.
 target_words: 80000

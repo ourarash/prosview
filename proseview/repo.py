@@ -33,7 +33,7 @@ CONTEXT_SKIP_DIRS: frozenset[str] = frozenset({
     # Skills are instructions to an agent, not story material. Prosview writes
     # its own defaults in here, and a manuscript view that counted them as
     # scenes would be reporting its own furniture back as prose.
-    "skills",
+    ".proseview/skills",
 })
 
 

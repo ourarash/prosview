@@ -11,7 +11,7 @@ Four places where AI shows up, all opt-in:
 1. **Selection menu.** Highlight any text in a scene. The pill that
    appears includes `Add TODO`, `Add Note`, and (if the corresponding
    tools are installed locally) `Run in Codex` and `Skills`. Skills are
-   reusable prompts you keep in `skills/<name>/SKILL.md`; they show up
+   reusable prompts you keep in `.proseview/skills/<name>/SKILL.md`; they show up
    automatically in the menu. Skills are discovered by Codex today — the
    Claude tab's picker is still empty.
 2. **Agent menu.** From the scene header, launch a conversation with
@@ -47,8 +47,8 @@ Four places where AI shows up, all opt-in:
    waiting whenever the dock is closed or the window is in the background.
 
    Every button is a shortcut to a skill. Proseview copies its defaults into
-   `skills/` the first time it runs in a repository, and from then on the file
-   is yours: edit `skills/quick_critique/SKILL.md` and Quick critique says what
+   `.proseview/skills/` the first time it runs in a repository, and from then on the file
+   is yours: edit `.proseview/skills/quick_critique/SKILL.md` and Quick critique says what
    you wrote. Delete one and it stays deleted. The wording that ships lives in
    the same format under `proseview/skills/` in the Proseview repository, so
    there is one place to read and one place to change.

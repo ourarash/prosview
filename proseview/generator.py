@@ -763,7 +763,7 @@ def render_html_report(
     return _render_template("index.html.j2", **context)
 
 
-def _load_skills(root: Path, skills_subdir: str = "skills") -> list[dict]:
+def _load_skills(root: Path, skills_subdir: str = ".proseview/skills") -> list[dict]:
     skills_dir = root / skills_subdir
     if not skills_dir.exists():
         return []

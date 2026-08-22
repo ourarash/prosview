@@ -98,7 +98,7 @@ def _seed_skills(root: Path) -> None:
     ``agents/openai.yaml`` -- the display-name / default-prompt path -- has to
     be a snippet for that path to be observable in the browser.
     """
-    skills = root / "skills"
+    skills = root / ".proseview/skills"
 
     # Scene skill: no snippet prefix, so it is absent from the selection menu.
     tighten = skills / "tighten-prose"
@@ -494,8 +494,8 @@ for line in sys.stdin:
     elif method == 'skills/list':
         cwd = params.get('cwds', [os.getcwd()])[0]
         emit({'id': request_id, 'result': {'data': [{'cwd': cwd, 'skills': [
-            {'name': 'tighten-prose', 'path': str(pathlib.Path(cwd) / 'skills' / 'tighten-prose' / 'SKILL.md'), 'enabled': True, 'description': 'Remove filler from selected prose.', 'interface': {'displayName': 'Tighten Prose', 'shortDescription': 'Remove filler from selected prose.'}, 'dependencies': {}},
-            {'name': 'snippet-continuity', 'path': str(pathlib.Path(cwd) / 'skills' / 'snippet-continuity' / 'SKILL.md'), 'enabled': True, 'description': 'Check story continuity.', 'interface': {'displayName': 'Continuity Check', 'shortDescription': 'Flag contradictions with the story bible.'}, 'dependencies': {}}
+            {'name': 'tighten-prose', 'path': str(pathlib.Path(cwd) / '.proseview/skills' / 'tighten-prose' / 'SKILL.md'), 'enabled': True, 'description': 'Remove filler from selected prose.', 'interface': {'displayName': 'Tighten Prose', 'shortDescription': 'Remove filler from selected prose.'}, 'dependencies': {}},
+            {'name': 'snippet-continuity', 'path': str(pathlib.Path(cwd) / '.proseview/skills' / 'snippet-continuity' / 'SKILL.md'), 'enabled': True, 'description': 'Check story continuity.', 'interface': {'displayName': 'Continuity Check', 'shortDescription': 'Flag contradictions with the story bible.'}, 'dependencies': {}}
         ], 'errors': []}]}})
     elif method == 'turn/start':
         next_turn += 1

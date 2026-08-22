@@ -26,7 +26,7 @@ BUILTIN_EDITOR_SCHEMES = {"vscode", "cursor", "zed", "positron", "custom"}
 # `repo_tab.folders` in its `.proseview.yaml`; missing folders are simply
 # skipped at render time.
 DEFAULT_CHARACTERS_PATH = "story-bible/characters"
-DEFAULT_SKILLS_PATH = "skills"
+DEFAULT_SKILLS_PATH = ".proseview/skills"
 DEFAULT_REPO_TAB_FOLDERS: tuple[str, ...] = (
     "plans", "continuity", "outline", "story-bible", "docs", "templates",
 )

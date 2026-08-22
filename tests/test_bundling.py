@@ -221,7 +221,7 @@ def test_config_defaults_match_legacy_layout():
     """
     cfg = Config()
     assert cfg.characters_path == "story-bible/characters"
-    assert cfg.skills_path == "skills"
+    assert cfg.skills_path == ".proseview/skills"
 
 
 def test_vendor_directory_ships_pinned_assets():
