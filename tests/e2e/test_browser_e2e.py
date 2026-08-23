@@ -5542,7 +5542,8 @@ def test_a_critique_answers_in_the_conversation_and_keeps_its_subject(
     wait_for_discuss_answer(page, "Fake answer")
     assert page.locator(".discuss-task").count() == 0
     asked = page.locator(".discuss-message.user").last.inner_text()
-    assert "short critique" in asked
+    assert "Critique the provided text" in asked
+    assert "Provide a clear suggested fix" in asked
     assert "Selection" in page.locator("#discussSelectionChip").inner_text()
 
 def test_quick_critique_queues_while_another_tab_restores_history(
