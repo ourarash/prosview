@@ -289,6 +289,9 @@ def style_observations(text: str, repeat_terms: Iterable[str] = ()) -> list[dict
 #: the definitions below carry no prompt of their own.
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 SKILL_BODY_MAX = 8000
+#: What a button says about itself sits under it in a card, above the next
+#: button. A sentence or two; anything longer stops being a label.
+SKILL_DESCRIPTION_MAX = 400
 
 
 def _skill_body(path: Path) -> str:
@@ -305,6 +308,30 @@ def default_skill_body(action_id: str) -> str:
     return _skill_body(DEFAULT_SKILLS_DIR / action_id / "SKILL.md")
 
 
+def _skill_description(path: Path) -> str:
+    """The one line a SKILL.md's frontmatter uses to explain itself.
+
+    Optional. A skill file that predates the field, or was written without it,
+    simply has nothing to say here.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    frontmatter, _body = split_frontmatter(raw)
+    value = frontmatter.get("description")
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return text[:SKILL_DESCRIPTION_MAX]
+
+
+def default_skill_description(action_id: str) -> str:
+    return _skill_description(DEFAULT_SKILLS_DIR / action_id / "SKILL.md")
+
+
 def action_instruction(root: Path, action_id: str) -> str:
     """What this action says, preferring the writer's own copy.
 
@@ -314,6 +341,41 @@ def action_instruction(root: Path, action_id: str) -> str:
     """
     own = _skill_body(root / DEFAULT_SKILLS_PATH / action_id / "SKILL.md")
     return own or default_skill_body(action_id)
+
+
+def action_description(root: Path, action_id: str) -> str:
+    """What this action's button says about itself, preferring the writer's copy.
+
+    Resolved field by field rather than file by file. A skill installed before
+    descriptions existed carries no ``description``, and the shipped default
+    stands in for that one line without overriding prose the writer has since
+    rewritten.
+    """
+    own = _skill_description(root / DEFAULT_SKILLS_PATH / action_id / "SKILL.md")
+    return own or default_skill_description(action_id)
+
+
+def offers_to_honor(
+    root: Path,
+    offered: Iterable[str],
+    offered_path: str,
+    skills_path: str = DEFAULT_SKILLS_PATH,
+) -> list[str]:
+    """Which remembered offers still apply to the directory skills live in now.
+
+    A remembered name is what keeps a deleted skill deleted, and that memory
+    only means anything for the directory it was recorded against. When the
+    skills directory moves, a repository that was never offered anything at the
+    new location is offered everything again -- otherwise the move leaves the
+    writer with buttons whose wording no file of theirs controls, and no way to
+    ask for one.
+    """
+    names = [str(value) for value in offered]
+    if offered_path:
+        return names if offered_path == skills_path else []
+    # Recorded before Prosview tracked where it had put them. The directory is
+    # its own evidence: skills sitting here were offered here.
+    return names if any((root / skills_path).glob("*/SKILL.md")) else []
 
 
 def install_default_skills(root: Path, already: Iterable[str] = ()) -> list[str]:
@@ -1110,13 +1172,25 @@ class DiscussStateStore:
         offered = repository.get("offered_skills")
         return [str(value) for value in offered] if isinstance(offered, list) else []
 
-    def record_offered_skills(self, names: Iterable[str]) -> None:
+    def offered_skills_path(self) -> str:
+        """The skills directory those names were offered in, if it was recorded.
+
+        Empty for a repository last seen before Prosview tracked this, which is
+        the only case ``offers_to_honor`` has to guess about.
+        """
+        with self._lock:
+            repository = self._load().get("repositories", {}).get(self.root_key) or {}
+        recorded = repository.get("offered_skills_path")
+        return str(recorded) if isinstance(recorded, str) else ""
+
+    def record_offered_skills(self, names: Iterable[str], skills_path: str) -> None:
         with self._lock:
             data = self._load()
             repository = data.setdefault("repositories", {}).setdefault(self.root_key, {})
             existing = repository.get("offered_skills")
             merged = sorted(set(existing if isinstance(existing, list) else []) | set(names))
             repository["offered_skills"] = merged
+            repository["offered_skills_path"] = skills_path
             self._write(data)
 
     def _write(self, data: dict[str, Any]) -> None:
@@ -1841,19 +1915,23 @@ class DiscussManager:
 
         The buttons are a convenience on top of these files; the files are where
         the wording lives, and editing one is how a writer changes what an
-        action says. Offered names are remembered, so deleting a skill is a
-        decision that sticks.
+        action says. Offered names are remembered along with the directory they
+        were offered in, so deleting a skill is a decision that sticks and
+        moving the directory is not mistaken for one.
         """
         try:
-            offered = self.state.offered_skills()
+            offered = offers_to_honor(
+                self.root, self.state.offered_skills(), self.state.offered_skills_path()
+            )
             installed = install_default_skills(self.root, offered)
         except Exception:
             return
-        if installed:
-            try:
-                self.state.record_offered_skills(installed)
-            except Exception:
-                pass
+        try:
+            # Written even on a run that installed nothing: the directory the
+            # offer was made in is what makes the next deletion stick.
+            self.state.record_offered_skills(installed, DEFAULT_SKILLS_PATH)
+        except Exception:
+            pass
 
     @staticmethod
     def normalized_agent(agent: Any) -> str:
@@ -2472,7 +2550,13 @@ class DiscussManager:
         return {"model": dict(chosen)}
 
     def list_actions(self) -> list[dict[str, Any]]:
-        return [
+        """Every button the panel can offer, with the wording its skill owns.
+
+        Read from disk per call. The skills directory sits under ``.proseview``,
+        which the watcher does not follow, so a rewritten description reaches
+        the panel by being asked for again rather than by a reload.
+        """
+        rows = [
             {
                 "id": action_id,
                 "label": value["label"],
@@ -2481,9 +2565,22 @@ class DiscussManager:
                 # A rewrite needs a target passage; a reading pass can take the
                 # scene it is looking at.
                 "scene_pass": value["kind"] == "critique",
+                "description": action_description(self.root, action_id),
             }
             for action_id, value in ACTION_DEFINITIONS.items()
         ]
+        rows.extend(
+            {
+                "id": action_id,
+                "label": value["label"],
+                "kind": "repository",
+                "count": 0,
+                "scene_pass": False,
+                "description": action_description(self.root, action_id),
+            }
+            for action_id, value in REPOSITORY_ACTION_DEFINITIONS.items()
+        )
+        return rows
 
     def list_skills(self, *, force_reload: bool = False, agent: str = DEFAULT_AGENT) -> list[dict[str, Any]]:
         client = self._client_for(self.normalized_agent(agent))

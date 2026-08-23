@@ -412,6 +412,51 @@ def test_a_writers_own_skill_is_what_the_button_sends(tmp_path: Path, monkeypatc
     manager.close()
 
 
+def test_a_button_explains_itself_from_the_skill_the_writer_can_edit(tmp_path: Path, monkeypatch):
+    """The card under a button is wording, so it lives where wording lives.
+
+    Read on every request rather than at startup: a writer who rewrites the
+    description has changed what the button promises, and reopening the panel
+    is the whole ceremony they should need.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    root = _repo(tmp_path)
+    manager = DiscussManager(root, client_factory=fake_factory)
+
+    shipped = {row["id"]: row for row in manager.list_actions()}
+    assert shipped["quick_critique"]["description"] == discuss_module.default_skill_description("quick_critique")
+    assert shipped["quick_critique"]["description"]
+
+    (root / ".proseview/skills" / "quick_critique" / "SKILL.md").write_text(
+        '---\nname: quick_critique\ndescription: "Read it like a hostile reviewer."\n---\n\nBody.\n',
+        encoding="utf-8",
+    )
+    rewritten = {row["id"]: row for row in manager.list_actions()}
+    assert rewritten["quick_critique"]["description"] == "Read it like a hostile reviewer."
+    manager.close()
+
+
+def test_a_skill_installed_before_descriptions_existed_still_explains_its_button(
+    tmp_path: Path, monkeypatch
+):
+    """Field by field, not file by file.
+
+    The writer's copy owns the prompt it has always owned; the shipped default
+    supplies only the line their file never had.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    root = _repo(tmp_path)
+    manager = DiscussManager(root, client_factory=fake_factory)
+    (root / ".proseview/skills" / "style_consistency" / "SKILL.md").write_text(
+        "---\nname: style_consistency\n---\n\nOnly the findings that hurt.\n", encoding="utf-8"
+    )
+
+    row = {r["id"]: r for r in manager.list_actions()}["style_consistency"]
+    assert row["description"] == discuss_module.default_skill_description("style_consistency")
+    assert discuss_module.action_instruction(root, "style_consistency") == "Only the findings that hurt."
+    manager.close()
+
+
 def test_a_deleted_skill_is_not_reinstalled_on_the_next_run(tmp_path: Path, monkeypatch):
     """Deleting one is a decision, and starting Prosview again must not undo it."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
@@ -425,6 +470,85 @@ def test_a_deleted_skill_is_not_reinstalled_on_the_next_run(tmp_path: Path, monk
 
     DiscussManager(root, client_factory=fake_factory).close()
     assert not removed.exists()
+
+
+def _seed_legacy_skill_offers(tmp_path: Path, root: Path, names: list[str]) -> Path:
+    """Write the bookkeeping a repository carried before the directory moved.
+
+    Names, and no record of where they were put -- which is exactly what a
+    repository that last ran Prosview with skills in the manuscript root has.
+    """
+    store = DiscussStateStore(root)
+    state = tmp_path / "state" / "proseview" / "discuss.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text(
+        json.dumps({"version": 1, "repositories": {store.root_key: {"offered_skills": names}}}),
+        encoding="utf-8",
+    )
+    return state
+
+
+def test_moving_the_skills_directory_offers_them_again_where_skills_now_live(
+    tmp_path: Path, monkeypatch
+):
+    """A remembered offer is only meaningful for the directory it was made in.
+
+    Repositories that ran Prosview before the skills directory moved had every
+    name on record, so the new location was never populated and the writer was
+    left with buttons whose wording no file of theirs controlled.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    root = _repo(tmp_path)
+    shipped = sorted(
+        path.parent.name for path in (Path(discuss_module.__file__).parent / "skills").glob("*/SKILL.md")
+    )
+    _seed_legacy_skill_offers(tmp_path, root, shipped)
+    assert not (root / ".proseview/skills").exists()
+
+    DiscussManager(root, client_factory=fake_factory).close()
+
+    installed = sorted(path.parent.name for path in (root / ".proseview/skills").glob("*/SKILL.md"))
+    assert installed == shipped
+
+
+def test_an_unrecorded_offer_is_read_off_the_directory_it_left_behind(tmp_path: Path):
+    """The one case with nothing on record: let the files answer.
+
+    Skills sitting in the current directory were offered there, so the names
+    still hold and a deletion among them stays deleted. An empty directory is
+    the pre-move repository, and it gets the whole set.
+    """
+    root = _repo(tmp_path)
+    names = ["quick_critique", "style_consistency"]
+
+    assert discuss_module.offers_to_honor(root, names, "") == []
+
+    skill = root / ".proseview/skills" / "quick_critique"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: quick_critique\n---\n\nMine.\n", encoding="utf-8")
+    assert discuss_module.offers_to_honor(root, names, "") == names
+    # Recorded elsewhere is recorded for elsewhere, however full this is.
+    assert discuss_module.offers_to_honor(root, names, "skills") == []
+    assert discuss_module.offers_to_honor(root, names, ".proseview/skills") == names
+
+
+def test_a_skill_deleted_after_the_move_is_still_not_reinstalled(tmp_path: Path, monkeypatch):
+    """Re-offering happens once, on the move -- not every time the panel opens.
+
+    Recording the directory alongside the names is what draws that line, so it
+    is recorded even on a run that installs nothing.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    root = _repo(tmp_path)
+    DiscussManager(root, client_factory=fake_factory).close()
+
+    skills = root / ".proseview/skills"
+    for path in sorted(skills.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    skills.rmdir()
+
+    DiscussManager(root, client_factory=fake_factory).close()
+    assert not skills.exists()
 
 
 def test_a_reading_pass_is_a_message_and_never_becomes_a_proposal(tmp_path: Path, monkeypatch):

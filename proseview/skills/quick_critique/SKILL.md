@@ -1,5 +1,6 @@
 ---
 name: quick_critique
+description: What is working against this scene, each note quoting the line and suggesting a fix.
 ---
 
 Critique the provided text (which may be an entire scene or just a selected paragraph) in plain English. For each issue you find:

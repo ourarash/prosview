@@ -2115,6 +2115,11 @@ class _Handler(BaseHTTPRequestHandler):
                         "default": self.discuss_manager.context.cfg.discuss.agent,
                     })
                     return
+                if path == "/api/discuss/actions":
+                    # What each button says lives in the writer's skill files,
+                    # so the panel asks rather than shipping the wording itself.
+                    self._send_json({"ok": True, "actions": self.discuss_manager.list_actions()})
+                    return
                 if path == "/api/discuss/conversations/open":
                     snapshot = self.discuss_manager.open(
                         {"kind": body.get("kind"), "path": body.get("path")},

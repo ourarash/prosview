@@ -1439,6 +1439,17 @@ def test_the_dock_offers_the_scene_before_the_repository(page: Page, server: Pro
     labels = page.locator(".discuss-story-action-title").all_inner_texts()
     assert labels[:2] == ["Quick critique", "Style and consistency"]
     assert "Trace a canon change" in labels
+    # The explanation under each card is the skill's own description. Pinning
+    # it to the file keeps the bundled fallback from drifting away from the
+    # prompt the way "five findings" did once the prompt stopped asking for five.
+    skill = server.root / ".proseview" / "skills" / "quick_critique" / "SKILL.md"
+    described = [
+        line.split(":", 1)[1].strip()
+        for line in skill.read_text(encoding="utf-8").splitlines()
+        if line.startswith("description:")
+    ]
+    assert described, "the shipped skill should describe itself"
+    assert page.locator(".discuss-story-action-copy").first.inner_text() == described[0]
 
     page.locator(".discuss-story-action", has_text="Quick critique").click()
     page.wait_for_selector(".discuss-message.user")
@@ -1446,6 +1457,40 @@ def test_the_dock_offers_the_scene_before_the_repository(page: Page, server: Pro
     assert page.locator("#discussInput").input_value() == ""
     wait_for_discuss_answer(page, "Fake answer")
     assert page.locator(".discuss-task").count() == 0
+
+
+def test_rewriting_a_skills_description_rewrites_its_card(page: Page, server: ProseviewServer):
+    """The wording is the writer's, and reopening the panel is the whole ceremony.
+
+    The skills directory sits under .proseview, which the watcher ignores, so
+    nothing reloads the page on their behalf -- the panel has to ask again.
+    """
+    open_scene(page, server)
+    open_discuss(page)
+    page.wait_for_selector(".discuss-story-action")
+
+    skill = server.root / ".proseview" / "skills" / "quick_critique" / "SKILL.md"
+    skill.write_text(
+        "---\nname: quick_critique\ndescription: Only the notes that cost the scene something.\n"
+        "---\n\nRead this like a hostile reviewer.\n",
+        encoding="utf-8",
+    )
+    page.click("#discussClose")
+    open_discuss(page)
+
+    # The cards paint from the bundled fallback first, so wait for the answer
+    # rather than reading whichever paint happened to be on screen.
+    page.wait_for_function(
+        """() => Array.from(document.querySelectorAll('.discuss-story-action-copy'))
+            .some(el => el.textContent === 'Only the notes that cost the scene something.')"""
+    )
+    card = page.locator(".discuss-story-action", has_text="Quick critique")
+    assert card.locator(".discuss-story-action-copy").inner_text() == (
+        "Only the notes that cost the scene something."
+    )
+    # Still a button that runs the pass, not just relabelled text.
+    card.click()
+    page.wait_for_selector(".discuss-message.user")
 
 
 def test_discuss_queues_stops_and_continues(page: Page, server: ProseviewServer):

@@ -51,11 +51,17 @@
         // What a writer reaches for on an ordinary afternoon. The test for this
         // list is repetition: these get run on the same scene in draft two and
         // again in draft five.
+        //
+        // What each card *says* belongs to its skill file, which the writer
+        // owns and can rewrite -- `description:` in the SKILL.md frontmatter,
+        // served by /api/discuss/actions. The wording here is the last resort:
+        // it stands in until that answer lands, and for a skill file whose
+        // frontmatter has no description line at all.
         const DISCUSS_SCENE_PASSES = [
             {
                 id: 'quick_critique',
                 label: 'Quick critique',
-                copy: 'Five things working against this scene, each quoting the line it came from.'
+                copy: 'What is working against this scene, each note quoting the line and suggesting a fix.'
             },
             {
                 id: 'style_consistency',
@@ -63,6 +69,21 @@
                 copy: 'Proseview finds the passives, filter verbs and echoes. The agent says which ones hurt.'
             }
         ];
+        // The rarer, heavier work. Same cards, same skill files behind them.
+        const DISCUSS_REPOSITORY_PASSES = [
+            {
+                id: 'canon_refactor',
+                label: 'Trace a canon change',
+                copy: 'Find consequences across the configured story folders.'
+            },
+            {
+                id: 'scene_continuity',
+                label: "Check this scene's continuity",
+                copy: 'Compare this document with the rest of the story evidence.'
+            }
+        ];
+        // id -> {label, description} as the skill files currently read.
+        var _discussActionCopy = {};
         // How long a finished turn keeps its result on screen before the
         // strip stands down.
         const DISCUSS_TURN_DONE_MS = 6000;
@@ -181,6 +202,28 @@
                 el.classList.toggle('utility-tab-busy', state === 'busy');
                 el.classList.toggle('utility-tab-attention', state === 'attention');
             });
+        }
+
+        // Asked for on every open rather than once per page: the skills live
+        // under .proseview, which the file watcher ignores, so a writer who has
+        // just rewritten a description gets it back by reopening the panel.
+        function loadDiscussScenePasses() {
+            return discussApi('/api/discuss/actions', {}).then(function(data) {
+                var next = {};
+                (data.actions || []).forEach(function(row) {
+                    if (!row || !row.id) return;
+                    next[row.id] = {
+                        label: String(row.label || ''),
+                        description: String(row.description || '')
+                    };
+                });
+                var changed = JSON.stringify(next) !== JSON.stringify(_discussActionCopy);
+                _discussActionCopy = next;
+                // The cards were painted from the fallbacks above before this
+                // answer arrived. Repaint only if it actually says something
+                // else, and only while they are the thing on screen.
+                if (changed && document.querySelector('.discuss-story-action')) renderDiscussSnapshot();
+            }).catch(function() {});
         }
 
         function loadDiscussAgentAvailability() {
@@ -485,6 +528,7 @@
                 _markDiscussAgentTab(_discussAgent, false);
                 loadDiscussModelCatalog(_discussAgent);
                 loadDiscussAgentAvailability();
+                loadDiscussScenePasses();
                 _pollInactiveDiscussAgent();
                 if (options.showSkills) loadDiscussSkills();
                 else if (requestedAutoRun && requestedAction) {
@@ -1547,6 +1591,23 @@
             return node;
         }
 
+        // One card. Its title and explanation come from the skill file when the
+        // server has answered with them, and from the fallback row when it has
+        // not. Both go in as text nodes: a description is writer-authored.
+        function discussPassGroup(rows, run) {
+            var group = elementWith('discuss-story-actions');
+            rows.forEach(function(row) {
+                var live = _discussActionCopy[row.id] || {};
+                var card = document.createElement('button');
+                card.type = 'button'; card.className = 'discuss-story-action';
+                card.appendChild(elementWith('discuss-story-action-title', live.label || row.label));
+                card.appendChild(elementWith('discuss-story-action-copy', live.description || row.copy));
+                card.onclick = function() { run(row.id); };
+                group.appendChild(card);
+            });
+            return group;
+        }
+
         function discussIsAtBottom(log) {
             return log.scrollHeight - log.scrollTop - log.clientHeight <= 1;
         }
@@ -2016,29 +2077,10 @@
                     var emptyDocument = discussTurnDocument();
                     if (emptyDocument && emptyDocument.kind === 'scene') {
                         empty.appendChild(elementWith('discuss-story-group', 'Read this scene'));
-                        var passes = elementWith('discuss-story-actions');
-                        DISCUSS_SCENE_PASSES.forEach(function(row) {
-                            var pass = document.createElement('button');
-                            pass.type = 'button'; pass.className = 'discuss-story-action';
-                            pass.appendChild(elementWith('discuss-story-action-title', row.label));
-                            pass.appendChild(elementWith('discuss-story-action-copy', row.copy));
-                            pass.onclick = function() { runDiscussScenePass(row.id); };
-                            passes.appendChild(pass);
-                        });
-                        empty.appendChild(passes);
+                        empty.appendChild(discussPassGroup(DISCUSS_SCENE_PASSES, runDiscussScenePass));
                     }
                     empty.appendChild(elementWith('discuss-story-group', 'Across the story'));
-                    var actions = elementWith('discuss-story-actions');
-                    var canon = document.createElement('button'); canon.type = 'button'; canon.className = 'discuss-story-action';
-                    canon.appendChild(elementWith('discuss-story-action-title', 'Trace a canon change'));
-                    canon.appendChild(elementWith('discuss-story-action-copy', 'Find consequences across the configured story folders.'));
-                    canon.onclick = function() { startDiscussRepositoryAction('canon_refactor'); };
-                    actions.appendChild(canon);
-                    var continuity = document.createElement('button'); continuity.type = 'button'; continuity.className = 'discuss-story-action';
-                    continuity.appendChild(elementWith('discuss-story-action-title', "Check this scene's continuity"));
-                    continuity.appendChild(elementWith('discuss-story-action-copy', 'Compare this document with the rest of the story evidence.'));
-                    continuity.onclick = function() { startDiscussRepositoryAction('scene_continuity'); };
-                    actions.appendChild(continuity); empty.appendChild(actions);
+                    empty.appendChild(discussPassGroup(DISCUSS_REPOSITORY_PASSES, startDiscussRepositoryAction));
                 }
                 log.appendChild(empty);
             }

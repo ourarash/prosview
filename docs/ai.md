@@ -49,9 +49,12 @@ Four places where AI shows up, all opt-in:
    Every button is a shortcut to a skill. Proseview copies its defaults into
    `.proseview/skills/` the first time it runs in a repository, and from then on the file
    is yours: edit `.proseview/skills/quick_critique/SKILL.md` and Quick critique says what
-   you wrote. Delete one and it stays deleted. The wording that ships lives in
-   the same format under `proseview/skills/` in the Proseview repository, so
-   there is one place to read and one place to change.
+   you wrote. Delete one and it stays deleted. That file also owns the sentence
+   the button shows about itself — the `description:` line in its frontmatter,
+   which is what the cards below explain themselves with; reopen the dock and
+   the card reads back what you wrote. The wording that ships lives in the same
+   format under `proseview/skills/` in the Proseview repository, so there is one
+   place to read and one place to change.
 
    Reading passes — critiques from the selection pill, and the scene passes
    below — are ordinary questions with ordinary answers. Nothing they return is
@@ -62,9 +65,9 @@ Four places where AI shows up, all opt-in:
    your draft; those keep their card and their exact target.
 
    Opening the dock on a scene offers passes over that scene, one click and no
-   typing. **Quick critique** returns five evidence-linked findings, each
-   quoting the line it came from. **Style and consistency** works differently:
-   Proseview's own analysis finds the passive constructions, filter verbs,
+   typing. **Quick critique** returns evidence-linked findings, each quoting
+   the line it came from and suggesting a fix. **Style and consistency** works
+   differently: Proseview's own analysis finds the passive constructions, filter verbs,
    repeated words and point-of-view slips first, and the agent only decides
    which of them weaken the scene and which are the narrator's voice. It can
    neither miss what the analysis found nor report anything the analysis did

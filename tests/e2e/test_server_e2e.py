@@ -134,6 +134,33 @@ def test_discuss_http_flow_is_document_aware_private_and_idempotent(server: Pros
     assert records[-1]["params"]["sandboxPolicy"] == {"type": "workspaceWrite", "networkAccess": False}
 
 
+def test_the_action_list_carries_the_wording_the_writer_owns(server: ProseviewServer):
+    """The panel asks the server what its buttons say, and the answer is a file.
+
+    Rewriting the skill in the repository has to reach the running server: the
+    skills directory is inside ``.proseview``, which the watcher ignores, so
+    nothing invalidates a cache on the writer's behalf.
+    """
+    headers = _discuss_headers(server)
+    actions = server.post_json("/api/discuss/actions", {}, headers=headers).json()["actions"]
+    by_id = {row["id"]: row for row in actions}
+    assert by_id["quick_critique"]["label"] == "Quick critique"
+    assert by_id["quick_critique"]["scene_pass"] is True
+    shipped = by_id["quick_critique"]["description"]
+    assert shipped and "Five things" not in shipped
+    assert by_id["canon_refactor"]["description"]
+
+    skill = server.root / ".proseview" / "skills" / "quick_critique" / "SKILL.md"
+    assert shipped in skill.read_text(encoding="utf-8")
+    skill.write_text(
+        "---\nname: quick_critique\ndescription: Whatever I decide it is.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+
+    reread = server.post_json("/api/discuss/actions", {}, headers=headers).json()["actions"]
+    assert {row["id"]: row for row in reread}["quick_critique"]["description"] == "Whatever I decide it is."
+
+
 def test_discuss_model_choice_reaches_the_agent_and_defaults_to_its_own_configuration(
     server: ProseviewServer, fake_home: Path
 ):
