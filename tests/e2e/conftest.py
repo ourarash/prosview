@@ -548,6 +548,12 @@ for line in sys.stdin:
             pending[approval_id] = (thread_id, turn_id, turn)
             emit({'id': approval_id, 'method': 'item/commandExecution/requestApproval', 'params': {'threadId': thread_id, 'turnId': turn_id, 'itemId': 'tool-' + turn_id, 'command': 'printf approved', 'cwd': os.getcwd(), 'reason': 'Test approval', 'availableDecisions': ['accept', 'acceptForSession', 'decline', 'cancel']}})
             continue
+        if 'REQUEST_FILE_CHANGE' in prompt:
+            approval_id = 9000 + next_turn
+            pending[approval_id] = (thread_id, turn_id, turn)
+            emit({'method': 'item/started', 'params': {'threadId': thread_id, 'turnId': turn_id, 'item': {'id': 'file-' + turn_id, 'type': 'fileChange', 'changes': [{'path': 'manuscript/ch01/01-opening.md', 'kind': 'modified', 'diff': '@@ -18,1 +18,1 @@\\n-She had used the same four digits since spring.\\n+She had changed the four digits at the start of spring.'}], 'status': 'inProgress'}}})
+            emit({'id': approval_id, 'method': 'item/fileChange/requestApproval', 'params': {'threadId': thread_id, 'turnId': turn_id, 'itemId': 'file-' + turn_id, 'reason': 'Test file change', 'availableDecisions': ['accept', 'decline', 'cancel']}})
+            continue
         answer = "Fake answer for " + turn_id + ": Patel's note is **safe** [link](https://example.test) [unsafe](javascript:alert(1)) `&amp;` <script>hostile()</script>"
         if 'SHOW_FILE_LINKS' in prompt:
             current_scene = pathlib.Path.cwd() / 'manuscript' / 'ch01' / '01-opening.md'

@@ -1346,7 +1346,7 @@ def sanitize_agent_message(message: dict[str, Any]) -> list[dict[str, Any]]:
             "status": turn.get("status"),
             "error": _bounded_text((turn.get("error") or {}).get("message")) if isinstance(turn.get("error"), dict) else "",
         }]
-    if method in {"item/started", "item/completed"}:
+    if method in {"item/started", "item/completed", "item/updated"}:
         item = params.get("item") if isinstance(params.get("item"), dict) else {}
         item_type = item.get("type")
         if item_type == "reasoning":
@@ -1363,13 +1363,13 @@ def sanitize_agent_message(message: dict[str, Any]) -> list[dict[str, Any]]:
             activity = {
                 "id": item.get("id"),
                 "kind": item_type,
-                "status": item.get("status") or ("inProgress" if method.endswith("started") else "completed"),
+                "status": item.get("status") or ("completed" if method.endswith("completed") else "inProgress"),
             }
             if item_type == "commandExecution":
                 activity.update(command=_bounded_text(item.get("command"), 4000), cwd=_bounded_text(item.get("cwd"), 2000), output=_bounded_text(item.get("aggregatedOutput")))
             elif item_type == "fileChange":
                 activity["changes"] = [
-                    {"path": _bounded_text(x.get("path"), 2000), "kind": x.get("kind")}
+                    {"path": _bounded_text(x.get("path"), 2000), "kind": x.get("kind"), "diff": x.get("diff")}
                     for x in (item.get("changes") or []) if isinstance(x, dict)
                 ]
             elif item_type == "webSearch":
@@ -3281,7 +3281,7 @@ class DiscussManager:
     ) -> str:
         result = client.request("thread/start", {
             "cwd": str(self.root),
-            "approvalPolicy": "on-request",
+            "approvalPolicy": "untrusted",
             "approvalsReviewer": "user",
             "developerInstructions": self.DEVELOPER_INSTRUCTIONS,
         })
@@ -3537,7 +3537,7 @@ class DiscussManager:
                         "threadId": thread_id,
                         "input": turn_input,
                         "cwd": str(self.root),
-                        "approvalPolicy": "on-request",
+                        "approvalPolicy": "untrusted",
                         "approvalsReviewer": "user",
                         "sandboxPolicy": (
                             {"type": "workspaceWrite", "networkAccess": False}
@@ -3999,6 +3999,7 @@ class DiscussManager:
                 client.respond(message["id"], {"decision": "decline"})
             conversation.add_notice("warning", "Oversized or malformed approval details were declined")
             return
+
         approval = {
             "request_id": request_key,
             "protocol_request_id": message["id"],
@@ -4015,6 +4016,27 @@ class DiscussManager:
             "available_decisions": [str(value) for value in available],
             "status": "pending",
         }
+        
+        if kind == "fileChange" and isinstance(params.get("item"), dict):
+            item = params.get("item")
+            activity = {
+                "id": item.get("id"),
+                "kind": "fileChange",
+                "status": "inProgress",
+                "turn_id": approval["turn_id"],
+                "changes": [
+                    {"path": _bounded_text(x.get("path"), 2000), "kind": x.get("kind"), "diff": x.get("diff")}
+                    for x in (item.get("changes") or []) if isinstance(x, dict)
+                ]
+            }
+            existing = conversation.activities.get(str(activity["id"]))
+            if existing:
+                merged = dict(existing)
+                merged.update({k: v for k, v in activity.items() if v not in ("", None, [], {})})
+                activity = merged
+            conversation.activities[str(activity["id"])] = activity
+            conversation.publish("activity.updated", {"activity": activity})
+
         conversation.approvals[request_key] = approval
         conversation.publish("approval.requested", {key: value for key, value in approval.items() if key != "protocol_request_id"})
 
@@ -4064,6 +4086,59 @@ class DiscussManager:
         event = {key: value for key, value in approval.items() if key != "protocol_request_id"}
         conversation.publish("approval.resolved", event)
         return event
+
+    def reject_activity(self, conversation_id: str, activity_id: str) -> dict[str, Any]:
+        conversation = self._get(conversation_id)
+        with conversation.lock:
+            activity = conversation.activities.get(activity_id)
+            if not activity:
+                raise ContextError("Activity not found")
+            if activity.get("kind") != "fileChange":
+                raise ContextError("Only fileChange activities can be rejected")
+            if activity.get("status") == "rejected":
+                raise ContextError("Activity is already rejected")
+            
+            changes = activity.get("changes") or []
+            if not changes:
+                raise ContextError("No changes found in activity")
+                
+            import tempfile
+            import subprocess
+            import os
+            
+            for change in changes:
+                diff = change.get("diff")
+                if not diff:
+                    continue
+                fd, temp_path = tempfile.mkstemp(suffix=".diff")
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        f.write(diff)
+                    
+                    target_file = change.get("path")
+                    if not target_file:
+                        continue
+                    if not os.path.isabs(target_file):
+                        target_file = os.path.join(str(self.root), target_file)
+                        
+                    # Apply reverse patch directly to the target file
+                    result = subprocess.run(
+                        ["patch", "-R", "-i", temp_path, target_file],
+                        cwd=str(self.root),
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode != 0:
+                        raise ContextError(f"Failed to revert changes: {result.stderr}")
+                finally:
+                    os.unlink(temp_path)
+            
+            activity["status"] = "rejected"
+            conversation.add_notice("info", "The file change was successfully reverted.")
+            conversation.publish("activity.updated", {"activity": activity})
+            
+        return {"activity_id": activity_id, "status": "rejected"}
+
 
     def _complete_stopped_turn(
         self,

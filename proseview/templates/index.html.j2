@@ -936,6 +936,38 @@
         }
     </script>
     <!-- Modals at the end of body to ensure they overlay everything -->
+
+    <!-- Discuss Diff Modal -->
+    <div id="discussDiffModalOverlay" class="modal-overlay" onclick="if(event.target === this) closeDiscussDiffModal()" hidden>
+        <div class="diff-modal card" role="dialog" aria-modal="true" aria-labelledby="discussDiffModalTitle">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 class="card-title" id="discussDiffModalTitle">Review Changes</h2>
+                    <p class="section-note" style="margin-top: 4px; margin-bottom: 0;">Review the changes proposed by the agent.</p>
+                </div>
+                <div style="display: flex; gap: 16px; align-items: center;">
+                    <div class="diff-toggle-group">
+                        <button type="button" class="diff-toggle-btn active" id="discussDiffToggleInline" onclick="setDiscussDiffMode('inline')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+                            Inline
+                        </button>
+                        <button type="button" class="diff-toggle-btn" id="discussDiffToggleSideBySide" onclick="setDiscussDiffMode('side-by-side')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1"></rect><rect x="14" y="3" width="7" height="18" rx="1"></rect></svg>
+                            Split
+                        </button>
+                    </div>
+                    <button type="button" class="close-btn" onclick="closeDiscussDiffModal()" aria-label="Close diff viewer">&times;</button>
+                </div>
+            </div>
+            <div id="discussDiffModalContent" class="diff-modal-content">
+                <!-- Diff HTML injected here -->
+            </div>
+            <div class="diff-modal-footer">
+                <button type="button" class="editor-btn" onclick="closeDiscussDiffModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="diffModalOverlay" class="modal-overlay" hidden>
         <div class="diff-modal card" role="dialog" aria-modal="true" aria-labelledby="diffModalTitle">
             <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">

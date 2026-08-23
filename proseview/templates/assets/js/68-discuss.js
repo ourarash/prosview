@@ -2117,9 +2117,18 @@
             // Progress and activities now belong to the turn strip, in the
             // order they happened. Only an approval that still needs a decision
             // earns a card here; a settled one is a line in the turn's trail.
+            var pendingApprovals = {};
             (snapshot.approvals || []).forEach(function(approval) {
-                if (approval.status !== 'pending' && approval.status !== 'resolving') return;
-                log.appendChild(renderDiscussApproval(approval));
+                if (approval.status === 'pending' || approval.status === 'resolving') {
+                    pendingApprovals[approval.item_id] = true;
+                    log.appendChild(renderDiscussApproval(approval));
+                }
+            });
+            
+            (snapshot.activities || []).forEach(function(activity) {
+                if (activity.kind === 'fileChange' && activity.changes && activity.changes.length > 0 && activity.changes[0].diff && !pendingApprovals[activity.id]) {
+                    log.appendChild(renderDiscussActivityCard(activity));
+                }
             });
             notices.forEach(function(notice, index) {
                 if (!renderedNotices[index]) log.appendChild(renderDiscussNotice(notice));
@@ -2630,6 +2639,13 @@
             if (approval.network) { var network = document.createElement('code'); network.textContent = 'Network: ' + JSON.stringify(approval.network); card.appendChild(network); }
             if (approval.permissions) { var permissions = document.createElement('code'); permissions.textContent = 'Permissions: ' + JSON.stringify(approval.permissions); card.appendChild(permissions); }
             if (approval.status === 'pending') {
+                if (approval.kind === 'fileChange' && _discussSnapshot) {
+                    var activity = (_discussSnapshot.activities || []).find(function(a) { return a.id === approval.item_id; });
+                    if (activity && activity.changes && activity.changes.length > 0 && activity.changes[0].diff) {
+                        var diffString = activity.changes[0].diff;
+                        card.appendChild(createDiscussDiffViewer(diffString));
+                    }
+                }
                 var actions = elementWith('discuss-approval-actions');
                 var options = [
                     ['accept', 'Accept once'], ['accept_for_session', 'Accept for session ⚠'], ['decline', 'Decline'], ['cancel', 'Cancel']
@@ -2645,6 +2661,180 @@
                 card.appendChild(actions);
             }
             return card;
+        }
+
+        
+
+
+function createDiscussDiffViewer(diffString) {
+    var wrapper = document.createElement('div');
+    wrapper.style.marginTop = '12px';
+    
+    var header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.marginBottom = '6px';
+    
+    var expandBtn = document.createElement('button');
+    expandBtn.className = 'discuss-chip discuss-chip-outline';
+    expandBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: text-bottom;"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg> Expand view';
+    expandBtn.style.cursor = 'pointer';
+    expandBtn.onclick = function(e) { e.preventDefault(); openDiscussDiffModal(diffString); };
+    
+    var toggleGroup = document.createElement('div');
+    toggleGroup.style.display = 'flex';
+    toggleGroup.style.gap = '4px';
+    
+    var btnInline = document.createElement('button');
+    btnInline.className = 'discuss-chip';
+    btnInline.textContent = 'Inline';
+    btnInline.style.cursor = 'pointer';
+    
+    var btnSplit = document.createElement('button');
+    btnSplit.className = 'discuss-chip discuss-chip-outline';
+    btnSplit.textContent = 'Split';
+    btnSplit.style.cursor = 'pointer';
+    
+    toggleGroup.appendChild(btnInline);
+    toggleGroup.appendChild(btnSplit);
+    
+    header.appendChild(expandBtn);
+    header.appendChild(toggleGroup);
+    
+    var diffContainer = document.createElement('div');
+    diffContainer.className = 'discuss-diff-viewer';
+    diffContainer.style.maxHeight = '300px';
+    diffContainer.style.overflowY = 'auto';
+    diffContainer.style.backgroundColor = 'var(--surface-bg, #0d1117)';
+    diffContainer.style.border = '1px solid var(--border-color, #30363d)';
+    diffContainer.style.borderRadius = '6px';
+    
+    wrapper.appendChild(header);
+    wrapper.appendChild(diffContainer);
+    
+    function loadDiff(mode) {
+        btnInline.className = mode === 'inline' ? 'discuss-chip' : 'discuss-chip discuss-chip-outline';
+        btnSplit.className = mode === 'side-by-side' ? 'discuss-chip' : 'discuss-chip discuss-chip-outline';
+        
+        diffContainer.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--text-muted);">Loading diff...</div>';
+        
+        discussApi('/api/discuss/format_patch', {patch: diffString, mode: mode})
+            .then(function(res) {
+                diffContainer.innerHTML = res.diff_html;
+            })
+            .catch(function(err) {
+                diffContainer.textContent = 'Error loading diff: ' + err.message;
+            });
+    }
+    
+    btnInline.onclick = function(e) { e.preventDefault(); loadDiff('inline'); };
+    btnSplit.onclick = function(e) { e.preventDefault(); loadDiff('side-by-side'); };
+    
+    loadDiff('inline');
+    
+    return wrapper;
+}
+
+
+
+var _currentDiscussDiffString = null;
+var _currentDiscussDiffMode = 'inline';
+
+function openDiscussDiffModal(diffString) {
+    _currentDiscussDiffString = diffString;
+    document.getElementById("discussDiffModalOverlay").hidden = false;
+    loadDiscussDiffMode(_currentDiscussDiffMode);
+}
+
+function closeDiscussDiffModal() {
+    document.getElementById("discussDiffModalOverlay").hidden = true;
+    _currentDiscussDiffString = null;
+}
+
+function setDiscussDiffMode(mode) {
+    _currentDiscussDiffMode = mode;
+    
+    var btnInline = document.getElementById('discussDiffToggleInline');
+    var btnSplit = document.getElementById('discussDiffToggleSideBySide');
+    if (btnInline && btnSplit) {
+        if (mode === 'inline') {
+            btnInline.classList.add('active');
+            btnSplit.classList.remove('active');
+        } else {
+            btnSplit.classList.add('active');
+            btnInline.classList.remove('active');
+        }
+    }
+    loadDiscussDiffMode(mode);
+}
+
+function loadDiscussDiffMode(mode) {
+    if (!_currentDiscussDiffString) return;
+    var contentDiv = document.getElementById('discussDiffModalContent');
+    contentDiv.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading diff...</div>';
+    discussApi('/api/discuss/format_patch', {patch: _currentDiscussDiffString, mode: mode})
+        .then(function(res) {
+            contentDiv.innerHTML = res.diff_html;
+        })
+        .catch(function(err) {
+            contentDiv.textContent = 'Error loading diff: ' + err.message;
+        });
+}
+
+// Close discuss modal when clicking outside
+(function() {
+    const overlay = document.getElementById("discussDiffModalOverlay");
+    if (overlay) {
+        overlay.addEventListener("click", function(event) {
+            if (event.target === overlay) {
+                closeDiscussDiffModal();
+            }
+        });
+    }
+});
+
+
+function renderDiscussActivityCard(activity) {
+            var card = elementWith('discuss-approval');
+            var header = elementWith('discuss-approval-header');
+            var title = document.createElement('strong'); title.textContent = 'Auto-accepted file change';
+            header.appendChild(title);
+            card.appendChild(header);
+            
+            var kindName = document.createElement('div');
+            kindName.textContent = 'fileChange';
+            kindName.style.fontSize = '14px';
+            kindName.style.marginTop = '4px';
+            card.appendChild(kindName);
+            
+            var diffString = activity.changes[0].diff;
+            card.appendChild(createDiscussDiffViewer(diffString));
+            
+            if (activity.status !== 'rejected') {
+                var actions = elementWith('discuss-approval-actions');
+                var button = document.createElement('button'); 
+                button.type = 'button'; 
+                button.textContent = 'Reject & Revert';
+                button.onclick = function() { rejectDiscussActivity(activity.id, button); };
+                actions.appendChild(button);
+                card.appendChild(actions);
+            } else {
+                var rejectedMsg = document.createElement('div');
+                rejectedMsg.style.marginTop = '12px';
+                rejectedMsg.style.color = 'var(--text-danger)';
+                rejectedMsg.style.fontWeight = 'bold';
+                rejectedMsg.textContent = 'This change was rejected and reverted.';
+                card.appendChild(rejectedMsg);
+            }
+            return card;
+        }
+
+        function rejectDiscussActivity(activityId, button) {
+            button.disabled = true;
+            discussApi('/api/discuss/conversations/' + encodeURIComponent(_discussConversationId) + '/activities/' + encodeURIComponent(activityId) + '/reject', {})
+                .then(function() { document.getElementById('discussAnnouncement').textContent = 'Activity rejected'; scheduleDiscussSnapshot(); })
+                .catch(function(error) { button.disabled = false; renderDiscussError(error.message); scheduleDiscussSnapshot(); });
         }
 
         function resolveDiscussApproval(requestId, decision, button, permissions) {
@@ -2847,6 +3037,12 @@
 
         function chooseDiscussInstruction(value, details) {
             document.getElementById('discussInput').value = value;
+            var visibleDocument = discussDocument();
+            if (visibleDocument && !_discussSelection && !_discussPendingAction && !_discussRepositoryAction) {
+                _discussDraftDocument = Object.assign({}, visibleDocument);
+                _discussIncludeCurrentDocument = true;
+                renderDiscussContext();
+            }
             saveDiscussDraft();
             if (details) details.open = false;
             document.getElementById('discussInput').focus();

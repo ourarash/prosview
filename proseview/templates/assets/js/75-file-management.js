@@ -84,6 +84,54 @@
             return button;
         }
 
+        function sidebarAbsolutePath(relativePath) {
+            var root = String(repoRoot || '');
+            var separator = root.indexOf('\\') >= 0 ? '\\' : '/';
+            return root.replace(/[\\/]+$/, '') + separator + String(relativePath || '').split('/').join(separator);
+        }
+
+        function sidebarLegacyCopy(text) {
+            return new Promise(function(resolve, reject) {
+                var field = document.createElement('textarea');
+                field.value = text;
+                field.setAttribute('readonly', '');
+                field.style.position = 'fixed';
+                field.style.left = '-9999px';
+                document.body.appendChild(field);
+                field.select();
+                var copied = false;
+                try { copied = !!document.execCommand && document.execCommand('copy'); }
+                catch (error) { copied = false; }
+                field.remove();
+                if (copied) resolve();
+                else reject(new Error('clipboard unavailable'));
+            });
+        }
+
+        function sidebarWriteClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text).catch(function() {
+                    return sidebarLegacyCopy(text);
+                });
+            }
+            return sidebarLegacyCopy(text);
+        }
+
+        function sidebarCopyNodePath(node, anchor, relative) {
+            var value = relative ? node.path : sidebarAbsolutePath(node.path);
+            var label = relative ? 'relative path' : 'path';
+            function restoreFocus() {
+                if (anchor && anchor.isConnected) anchor.focus({preventScroll: true});
+            }
+            sidebarWriteClipboard(value).then(function() {
+                sidebarShowToast('Copied ' + label + '.');
+                restoreFocus();
+            }, function() {
+                sidebarShowToast('Could not copy ' + label + '. Clipboard access is unavailable.', true);
+                restoreFocus();
+            });
+        }
+
         function sidebarOpenNodeMenu(node, anchor, point) {
             var menu = document.getElementById('sidebarContextMenu');
             if (!menu) return;
@@ -98,10 +146,17 @@
                 menu.appendChild(sidebarMenuButton('New folder here', 'new-folder', function() {
                     sidebarOpenCreateDialog('folder', node.path);
                 }));
+                menu.appendChild(document.createElement('hr'));
             }
+            menu.appendChild(sidebarMenuButton('Copy path', 'copy-path', function() {
+                sidebarCopyNodePath(node, anchor, false);
+            }));
+            menu.appendChild(sidebarMenuButton('Copy relative path', 'copy-relative-path', function() {
+                sidebarCopyNodePath(node, anchor, true);
+            }));
             var protectedRoot = Number(anchor.dataset.depth || '0') === 0;
             if (!protectedRoot) {
-                if (!node.is_file) menu.appendChild(document.createElement('hr'));
+                menu.appendChild(document.createElement('hr'));
                 menu.appendChild(sidebarMenuButton('Rename', 'rename', function() {
                     sidebarRunAfterDirtyGuard(function() { sidebarBeginRename(node, anchor); });
                 }));
@@ -117,10 +172,8 @@
         }
 
         function sidebarAttachRowActions(node, li, primary, depth) {
-            // The project config file is visible for preview but intentionally
-            // has no mutation actions. Configured folder roots still get the
-            // useful "create here" actions below.
-            if (depth === 0 && node.is_file) return;
+            // Top-level configured folders and the project config file are
+            // protected from rename/delete, but copying their paths is safe.
             var more = document.createElement('button');
             more.type = 'button';
             more.className = 'sidebar-row-more';
@@ -309,7 +362,7 @@
                     }).catch(function(errorValue) {
                         finished = false;
                         input.disabled = false;
-                        sidebarShowToast(errorValue.message);
+                        sidebarShowToast(errorValue.message, true);
                         input.focus();
                     });
                 }
@@ -351,9 +404,10 @@
             });
         }
 
-        function sidebarShowToast(message) {
+        function sidebarShowToast(message, isError) {
             var toast = document.getElementById('sidebarFileToast');
             if (!toast || !message) return;
+            toast.setAttribute('role', isError ? 'alert' : 'status');
             toast.textContent = message;
             toast.hidden = false;
             setTimeout(function() { toast.hidden = true; }, 5000);

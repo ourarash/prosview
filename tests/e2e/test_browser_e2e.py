@@ -2999,6 +2999,62 @@ def test_repo_tree_supports_keyboard_traversal_and_activation(page: Page, server
     assert expected_path and expected_path in page.evaluate("decodeURIComponent(location.hash)")
 
 
+def test_file_explorer_copies_absolute_and_repository_relative_paths(
+    page: Page,
+    server: ProseviewServer,
+):
+    open_dashboard(page, server)
+    page.evaluate(
+        """() => Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: {writeText: text => { window.__sidebarCopiedPath = text; return Promise.resolve(); }}
+        })"""
+    )
+    relative = "plans/book-plan.md"
+    row = page.locator(f'#sidebarTree .file-link[data-path="{relative}"]')
+
+    row.click(button="right")
+    menu = page.locator("#sidebarContextMenu")
+    assert menu.get_by_role("menuitem").all_inner_texts() == [
+        "Copy path", "Copy relative path", "Rename", "Delete…"
+    ]
+    menu.get_by_role("menuitem", name="Copy relative path", exact=True).click()
+    page.wait_for_function("value => window.__sidebarCopiedPath === value", arg=relative)
+    assert page.locator("#sidebarFileToast").inner_text() == "Copied relative path."
+
+    row.click(button="right")
+    menu.get_by_role("menuitem", name="Copy path", exact=True).click()
+    absolute = str((server.root / relative).resolve())
+    page.wait_for_function("value => window.__sidebarCopiedPath === value", arg=absolute)
+    assert page.locator("#sidebarFileToast").inner_text() == "Copied path."
+    assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "More actions for book-plan.md"
+
+    page.evaluate(
+        """() => {
+            navigator.clipboard.writeText = () => Promise.reject(new Error('denied'));
+            document.execCommand = command => {
+                if (command !== 'copy') return false;
+                window.__sidebarLegacyCopiedPath = document.activeElement.value;
+                return true;
+            };
+        }"""
+    )
+    row.click(button="right")
+    menu.get_by_role("menuitem", name="Copy relative path", exact=True).click()
+    page.wait_for_function("value => window.__sidebarLegacyCopiedPath === value", arg=relative)
+    assert page.locator("#sidebarFileToast").inner_text() == "Copied relative path."
+
+    page.evaluate("document.execCommand = () => false")
+    row.click(button="right")
+    menu.get_by_role("menuitem", name="Copy path", exact=True).click()
+    page.wait_for_function(
+        "() => document.getElementById('sidebarFileToast').textContent.startsWith('Could not copy path.')"
+    )
+    toast = page.locator("#sidebarFileToast")
+    assert toast.get_attribute("role") == "alert"
+    assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "More actions for book-plan.md"
+
+
 def test_file_explorer_creates_an_empty_scene_and_opens_it_for_editing(
     page: Page,
     server: ProseviewServer,
@@ -3031,7 +3087,9 @@ def test_file_explorer_folder_menu_renames_and_trashes_nonempty_folders(
     story_bible = tree.locator('.dir-toggle').filter(has_text=re.compile(r"^story-bible$")).first
     story_bible.click(button="right")
     root_menu = page.locator("#sidebarContextMenu")
-    assert root_menu.get_by_role("menuitem").all_inner_texts() == ["New file here", "New folder here"]
+    assert root_menu.get_by_role("menuitem").all_inner_texts() == [
+        "New file here", "New folder here", "Copy path", "Copy relative path"
+    ]
     root_menu.get_by_role("menuitem", name="New folder here").click()
 
     create_folder = page.get_by_role("dialog", name="New folder")
@@ -6568,3 +6626,30 @@ def test_discuss_panel_state_preserved_on_reload(page: Page, server: ProseviewSe
     page.wait_for_selector("#discussPanel", state="hidden")
     page.wait_for_timeout(500) # Give it some time to ensure it doesn't pop open
     assert page.locator("#discussPanel").is_hidden(), "Discuss panel should remain closed after reload"
+
+def test_discuss_file_change_approval_renders_diff(page: Page, server: ProseviewServer):
+    open_scene(page, server)
+    page.evaluate("openDiscuss(document.querySelector('#utilityTabCodex'))")
+    page.wait_for_selector("#discussPanel", state="visible")
+    page.wait_for_function("() => document.querySelector('#discussConnection').innerText.startsWith('Live')")
+
+    page.fill("#discussInput", "REQUEST_FILE_CHANGE")
+    page.locator("#discussSend").click()
+
+    # Wait for the approval card
+    page.wait_for_selector(".discuss-approval", state="visible")
+    card = page.locator(".discuss-approval")
+
+    # Verify the diff viewer is rendered
+    diff_viewer = card.locator(".discuss-diff-viewer")
+    diff_viewer.wait_for(state="visible")
+    
+    # Verify the diff lines are present
+    assert diff_viewer.locator("div", has_text="-She had used the same four digits since spring.").is_visible()
+    assert diff_viewer.locator("div", has_text="+She had changed the four digits at the start of spring.").is_visible()
+
+    # Accept the file change
+    card.get_by_role("button", name="Accept once").click()
+    
+    # Wait for it to be resolved
+    page.wait_for_function("() => document.querySelector('#discussAnnouncement').innerText.includes('Approval accept')")

@@ -494,7 +494,138 @@ def _atomic_write_text(path: Path, text: str) -> None:
             except OSError:
                 pass
 
-
+def _format_patch_html(patch: str, mode: str = "inline") -> str:
+    import difflib
+    from html import escape as html_escape
+    
+    diff_html = []
+    
+    chunks = []
+    current_chunk = None
+    
+    lines = patch.splitlines(keepends=True)
+    for line in lines:
+        if line.startswith('---') or line.startswith('+++'):
+            continue
+        m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+        if m:
+            if current_chunk:
+                chunks.append(current_chunk)
+            old_start = int(m.group(1))
+            new_start = int(m.group(3))
+            current_chunk = {
+                'old_start': old_start,
+                'new_start': new_start,
+                'old_lines': [],
+                'new_lines': [],
+                'header': line
+            }
+            continue
+            
+        if not current_chunk:
+            continue
+            
+        if line.startswith('\\ No newline'):
+            continue
+            
+        if line.startswith('-'):
+            current_chunk['old_lines'].append(line[1:])
+        elif line.startswith('+'):
+            current_chunk['new_lines'].append(line[1:])
+        elif line.startswith(' '):
+            current_chunk['old_lines'].append(line[1:])
+            current_chunk['new_lines'].append(line[1:])
+        else:
+            current_chunk['old_lines'].append(line)
+            current_chunk['new_lines'].append(line)
+            
+    if current_chunk:
+        chunks.append(current_chunk)
+        
+    diff_html.append(f'<table class="diff diff-{mode}">')
+        
+    for chunk in chunks:
+        if mode == "inline":
+            diff_html.append(f'<tr><td class="diff_header">...</td><td class="diff_header">...</td><td style="text-align:center; color:var(--text-muted); font-size:12px; font-style:italic; background:var(--surface-bg);">{html_escape(chunk["header"].strip())}</td></tr>')
+        else:
+            diff_html.append(f'<tr><td class="diff_header">...</td><td style="text-align:center; color:var(--text-muted); font-size:12px; font-style:italic; background:var(--surface-bg);">{html_escape(chunk["header"].strip())}</td><td class="diff_header">...</td><td style="text-align:center; color:var(--text-muted); font-size:12px; font-style:italic; background:var(--surface-bg);"></td></tr>')
+            
+        old_lines = chunk['old_lines']
+        new_lines = chunk['new_lines']
+        
+        sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+        opcodes = sm.get_opcodes()
+        
+        old_offset = chunk['old_start']
+        new_offset = chunk['new_start']
+        
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag == 'equal':
+                for k in range(i2 - i1):
+                    if mode == "inline":
+                        diff_html.append(f'<tr><td class="diff_header">{old_offset+i1+k}</td><td class="diff_header">{new_offset+j1+k}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+                    else:
+                        diff_html.append(f'<tr><td class="diff_header">{old_offset+i1+k}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td><td class="diff_header">{new_offset+j1+k}</td><td style="white-space:pre-wrap">{html_escape(new_lines[j1+k])}</td></tr>')
+            elif tag == 'delete':
+                for k in range(i2 - i1):
+                    if mode == "inline":
+                        diff_html.append(f'<tr><td class="diff_header">{old_offset+i1+k}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+                    else:
+                        diff_html.append(f'<tr><td class="diff_header">{old_offset+i1+k}</td><td class="diff_sub" style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td><td class="diff_header"></td><td class="diff_sub"></td></tr>')
+            elif tag == 'insert':
+                for k in range(j2 - j1):
+                    if mode == "inline":
+                        diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{new_offset+j1+k}</td><td class="diff_add" style="white-space:pre-wrap">{html_escape(new_lines[j1+k])}</td></tr>')
+                    else:
+                        diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_add"></td><td class="diff_header">{new_offset+j1+k}</td><td class="diff_add" style="white-space:pre-wrap">{html_escape(new_lines[j1+k])}</td></tr>')
+            elif tag == 'replace':
+                old_text = "".join(old_lines[i1:i2])
+                new_text = "".join(new_lines[j1:j2])
+                old_words = re.findall(r"\S+|[^\S\n]+|\n", old_text)
+                new_words = re.findall(r"\S+|[^\S\n]+|\n", new_text)
+                wsm = difflib.SequenceMatcher(None, old_words, new_words)
+                
+                old_html_lines = [[]]
+                new_html_lines = [[]]
+                
+                for wtag, wi1, wi2, wj1, wj2 in wsm.get_opcodes():
+                    if wtag in ('equal', 'delete', 'replace'):
+                        for w in old_words[wi1:wi2]:
+                            if w == '\n': old_html_lines.append([])
+                            else:
+                                if wtag == 'equal': old_html_lines[-1].append(html_escape(w))
+                                else: old_html_lines[-1].append(f'<del class="diff-delete">{html_escape(w)}</del>')
+                    if wtag in ('equal', 'insert', 'replace'):
+                        for w in new_words[wj1:wj2]:
+                            if w == '\n': new_html_lines.append([])
+                            else:
+                                if wtag == 'equal': new_html_lines[-1].append(html_escape(w))
+                                else: new_html_lines[-1].append(f'<ins class="diff-insert">{html_escape(w)}</ins>')
+                # Remove empty trailing lines from split
+                if len(old_html_lines) > 1 and not old_html_lines[-1]: old_html_lines.pop()
+                if len(new_html_lines) > 1 and not new_html_lines[-1]: new_html_lines.pop()
+                
+                max_lines = max(len(old_html_lines), len(new_html_lines))
+                for k in range(max_lines):
+                    old_ln = old_offset + i1 + k if k < len(old_html_lines) else ""
+                    new_ln = new_offset + j1 + k if k < len(new_html_lines) else ""
+                    
+                    old_content = "".join(old_html_lines[k]) if k < len(old_html_lines) else ""
+                    new_content = "".join(new_html_lines[k]) if k < len(new_html_lines) else ""
+                    
+                    if mode == "inline":
+                        if k < len(old_html_lines) and k < len(new_html_lines):
+                            diff_html.append(f'<tr><td class="diff_header">{old_ln}</td><td class="diff_header">{new_ln}</td><td class="diff_sub" style="white-space:pre-wrap">{old_content}</td></tr>')
+                            diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header"></td><td class="diff_add" style="white-space:pre-wrap">{new_content}</td></tr>')
+                        elif k < len(old_html_lines):
+                            diff_html.append(f'<tr><td class="diff_header">{old_ln}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{old_content}</td></tr>')
+                        elif k < len(new_html_lines):
+                            diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{new_ln}</td><td class="diff_add" style="white-space:pre-wrap">{new_content}</td></tr>')
+                    else:
+                        diff_html.append(f'<tr><td class="diff_header">{old_ln}</td><td class="diff_sub" style="white-space:pre-wrap">{old_content}</td><td class="diff_header">{new_ln}</td><td class="diff_add" style="white-space:pre-wrap">{new_content}</td></tr>')
+                        
+    diff_html.append('</table>')
+    return "\n".join(diff_html)
 
 def _compute_diff_summary(old_text: str, new_text: str) -> str:
     import difflib
@@ -2162,6 +2293,16 @@ class _Handler(BaseHTTPRequestHandler):
                 new_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/new", path)
                 stop_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/turns/([^/]+)/stop", path)
                 approval_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/approvals/([^/]+)", path)
+                reject_activity_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/activities/([^/]+)/reject", path)
+                if path == "/api/discuss/format_patch":
+                    patch_str = body.get("patch", "")
+                    mode_str = body.get("mode", "inline")
+                    try:
+                        html = _format_patch_html(patch_str, mode=mode_str)
+                        self._send_json({"ok": True, "diff_html": html})
+                    except Exception as e:
+                        self._send_json({"ok": False, "error": str(e)}, 500)
+                    return
                 if question_match:
                     result = self.discuss_manager.submit(
                         question_match.group(1),
@@ -2255,6 +2396,12 @@ class _Handler(BaseHTTPRequestHandler):
                 if dismiss_notice_match:
                     result = self.discuss_manager.dismiss_notice(
                         dismiss_notice_match.group(1), dismiss_notice_match.group(2)
+                    )
+                    self._send_json({"ok": True, **result})
+                    return
+                if reject_activity_match:
+                    result = self.discuss_manager.reject_activity(
+                        reject_activity_match.group(1), reject_activity_match.group(2)
                     )
                     self._send_json({"ok": True, **result})
                     return
