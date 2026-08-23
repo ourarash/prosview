@@ -156,6 +156,7 @@
                     a.onclick = () => previewRepoFile(node.path);
                 }
                 li.appendChild(a);
+                if (typeof sidebarAttachRowActions === 'function') sidebarAttachRowActions(node, li, a, depth);
             } else {
                 const tog = document.createElement('button');
                 tog.type = 'button';
@@ -172,6 +173,7 @@
                     tog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
                 };
                 li.appendChild(tog);
+                if (typeof sidebarAttachRowActions === 'function') sidebarAttachRowActions(node, li, tog, depth);
                 if (node.children && node.children.length)
                     li.appendChild(buildSidebarList(node.children, depth + 1));
                 if (depth === 0) li.classList.add('expanded');

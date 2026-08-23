@@ -2898,6 +2898,104 @@ def test_repo_tree_supports_keyboard_traversal_and_activation(page: Page, server
     assert expected_path and expected_path in page.evaluate("decodeURIComponent(location.hash)")
 
 
+def test_file_explorer_creates_an_empty_scene_and_opens_it_for_editing(
+    page: Page,
+    server: ProseviewServer,
+):
+    open_dashboard(page, server)
+    page.get_by_role("button", name="Create a file or folder").click()
+    menu = page.get_by_role("menu")
+    assert menu.get_by_role("menuitem").all_inner_texts() == ["New file", "New folder"]
+    menu.get_by_role("menuitem", name="New file", exact=True).click()
+
+    dialog = page.get_by_role("dialog", name="New file")
+    dialog.get_by_label("Name").fill("03-new-arrival")
+    dialog.get_by_label("Location").select_option("manuscript/ch01")
+    assert "manuscript/ch01/03-new-arrival.md" in dialog.locator("#sidebarCreatePreview").inner_text()
+    dialog.get_by_role("button", name="Create", exact=True).click()
+
+    page.wait_for_function(
+        "() => location.hash === '#/scene/ch01%2F03-new-arrival.md' && window._pmEditMode === true"
+    )
+    assert (server.root / "manuscript/ch01/03-new-arrival.md").read_bytes() == b""
+    assert page.locator("#sceneModal").is_visible()
+
+
+def test_file_explorer_folder_menu_renames_and_trashes_nonempty_folders(
+    page: Page,
+    server: ProseviewServer,
+):
+    open_dashboard(page, server)
+    tree = page.get_by_role("tree", name="Repository files")
+    story_bible = tree.locator('.dir-toggle').filter(has_text=re.compile(r"^story-bible$")).first
+    story_bible.click(button="right")
+    root_menu = page.locator("#sidebarContextMenu")
+    assert root_menu.get_by_role("menuitem").all_inner_texts() == ["New file here", "New folder here"]
+    root_menu.get_by_role("menuitem", name="New folder here").click()
+
+    create_folder = page.get_by_role("dialog", name="New folder")
+    assert create_folder.get_by_label("Location").input_value() == "story-bible"
+    create_folder.get_by_label("Name").fill("Locations")
+    create_folder.get_by_role("button", name="Create", exact=True).click()
+    page.wait_for_function(
+        "() => !!document.querySelector('#sidebarTree .dir-toggle + .sidebar-row-more[aria-label=\"More actions for Locations\"]')"
+    )
+
+    locations = tree.locator('.dir-toggle').filter(has_text=re.compile(r"^Locations$")).first
+    locations.click(button="right")
+    page.locator("#sidebarContextMenu").get_by_role("menuitem", name="New file here").click()
+    create_file = page.get_by_role("dialog", name="New file")
+    assert create_file.get_by_label("Location").input_value() == "story-bible/Locations"
+    create_file.get_by_label("Name").fill("market")
+    create_file.get_by_role("button", name="Create", exact=True).click()
+    page.wait_for_function("() => location.hash === '#/file/story-bible%2FLocations%2Fmarket.md'")
+    assert (server.root / "story-bible/Locations/market.md").read_bytes() == b""
+
+    locations = tree.locator('.dir-toggle').filter(has_text=re.compile(r"^Locations$")).first
+    locations.click(button="right")
+    page.locator("#sidebarContextMenu").get_by_role("menuitem", name="Rename").click()
+    rename = page.get_by_label("New name for Locations")
+    rename.fill("Places")
+    rename.press("Enter")
+    page.wait_for_function(
+        "() => !!document.querySelector('#sidebarTree .dir-toggle + .sidebar-row-more[aria-label=\"More actions for Places\"]')"
+    )
+    assert (server.root / "story-bible/Places/market.md").read_bytes() == b""
+
+    places = tree.locator('.dir-toggle').filter(has_text=re.compile(r"^Places$")).first
+    places.click(button="right")
+    page.locator("#sidebarContextMenu").get_by_role("menuitem", name="Delete…").click()
+    delete_dialog = page.get_by_role("dialog", name="Delete folder?")
+    assert "everything inside" in delete_dialog.inner_text()
+    assert ".proseview/trash" in delete_dialog.inner_text()
+    delete_dialog.get_by_role("button", name="Delete", exact=True).click()
+    page.wait_for_function(
+        "() => ![...document.querySelectorAll('#sidebarTree .dir-toggle')].some(el => el.textContent === 'Places')"
+    )
+    assert not (server.root / "story-bible/Places").exists()
+    trashed = list((server.root / ".proseview/trash").rglob("Places/market.md"))
+    assert len(trashed) == 1 and trashed[0].read_bytes() == b""
+
+
+def test_file_creation_never_discards_a_dirty_scene_without_confirmation(
+    page: Page,
+    server: ProseviewServer,
+):
+    open_scene(page, server)
+    enter_edit_mode(page)
+    append_to_paragraph(page, "The loft smelled of cold coffee", " Unsaved sidebar test.")
+
+    page.get_by_role("button", name="Create a file or folder").click()
+    page.get_by_role("menuitem", name="New folder", exact=True).click()
+
+    unsaved = page.get_by_role("dialog", name="Unsaved changes")
+    unsaved.wait_for(state="visible")
+    unsaved.get_by_role("button", name="Cancel").click()
+    assert page.get_by_role("dialog", name="New folder").is_hidden()
+    assert page.evaluate("window._pmEditMode && window._pmDirty")
+    assert not (server.root / "story-bible/Should not exist").exists()
+
+
 def test_repo_tree_auto_reveal_keeps_expansion_semantics_in_sync(
     page: Page,
     server: ProseviewServer,

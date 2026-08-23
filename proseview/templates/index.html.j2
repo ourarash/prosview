@@ -67,11 +67,37 @@
     <nav id="repoSidebar" class="repo-sidebar" aria-label="Repository files">
         <div class="sidebar-header">
             <span class="sidebar-title">Files</span>
-            <button class="sidebar-close-btn" onclick="setSidebarOpen(false)" title="Close sidebar" aria-label="Close sidebar"><svg class="sidebar-chrome-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7L7 17"></path></svg></button>
+            <div class="sidebar-header-actions">
+                <div class="sidebar-create-wrap"><button id="sidebarCreateBtn" class="sidebar-chrome-btn" type="button" aria-label="Create a file or folder" aria-haspopup="menu" aria-controls="sidebarCreateMenu" aria-expanded="false" title="Create a file or folder">+</button><div id="sidebarCreateMenu" class="sidebar-action-menu sidebar-create-menu" role="menu" hidden><button type="button" role="menuitem" data-create-kind="file">New file</button><button type="button" role="menuitem" data-create-kind="folder">New folder</button></div></div>
+                <button class="sidebar-close-btn" type="button" onclick="setSidebarOpen(false)" title="Close sidebar" aria-label="Close sidebar"><svg class="sidebar-chrome-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7L7 17"></path></svg></button>
+            </div>
         </div>
         <div id="sidebarTree" class="repo-tree sidebar-tree"></div>
         <div class="sidebar-resize-handle" id="sidebarResizeHandle" role="separator" tabindex="0" aria-label="Resize file browser" aria-orientation="vertical" aria-valuemin="160" aria-valuemax="520" aria-valuenow="280"></div>
     </nav>
+    <div id="sidebarContextMenu" class="sidebar-action-menu sidebar-context-menu" role="menu" hidden></div>
+    <dialog id="sidebarCreateDialog" class="sidebar-file-dialog" aria-labelledby="sidebarCreateTitle">
+        <form id="sidebarCreateForm" method="dialog">
+            <h2 id="sidebarCreateTitle">New file</h2>
+            <label for="sidebarCreateName">Name</label>
+            <input id="sidebarCreateName" name="name" type="text" maxlength="240" autocomplete="off" required>
+            <label for="sidebarCreateLocation">Location</label>
+            <select id="sidebarCreateLocation" name="parent"></select>
+            <p id="sidebarCreatePreview" class="sidebar-dialog-preview"></p>
+            <p id="sidebarCreateError" class="sidebar-dialog-error" role="alert" hidden></p>
+            <div class="sidebar-dialog-actions"><button type="button" data-dialog-cancel>Cancel</button><button id="sidebarCreateConfirm" class="sidebar-dialog-primary" type="submit">Create</button></div>
+        </form>
+    </dialog>
+    <dialog id="sidebarDeleteDialog" class="sidebar-file-dialog" aria-labelledby="sidebarDeleteTitle" aria-describedby="sidebarDeleteDescription">
+        <form id="sidebarDeleteForm" method="dialog">
+            <h2 id="sidebarDeleteTitle">Delete file?</h2>
+            <p id="sidebarDeleteDescription"></p>
+            <p class="sidebar-dialog-note">It will be moved to <code>.proseview/trash</code>, not permanently erased.</p>
+            <p id="sidebarDeleteError" class="sidebar-dialog-error" role="alert" hidden></p>
+            <div class="sidebar-dialog-actions"><button type="button" data-dialog-cancel>Cancel</button><button id="sidebarDeleteConfirm" class="sidebar-dialog-danger" type="submit">Delete</button></div>
+        </form>
+    </dialog>
+    <div id="sidebarFileToast" class="sidebar-file-toast" role="status" aria-live="polite" hidden></div>
 
     <main id="mainContent">
     <header class="top-banner">
@@ -892,6 +918,7 @@
             wrapInList, liftListItem, splitListItem, inputRules, wrappingInputRule,
             hlPluginKey, buildHlPlugin, createAnnotationNodeView
         };
+        window.dispatchEvent(new Event('proseview:editor-ready'));
 
         // If the scene view is already open, re-render so it uses ProseMirror.
         if (document.documentElement.dataset.view === 'scene' && typeof render === 'function') {

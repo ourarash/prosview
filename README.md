@@ -94,6 +94,8 @@ it happens is visible instead of inferred. Hover any scene for its card.
   another file never interrupts either one. [How the AI features work →](docs/ai.md)
 - 🔎 **Repository search.** `Mod-K` from anywhere — paths, metadata, TODOs,
   notes, and prose, grouped by kind.
+- 📁 **File browser.** Create empty Markdown files and folders, rename them
+  inline, or move them to Proseview Trash from the row menu or right-click.
 - 🕹️ **File history.** Versions of a scene, restored through a diff you
   can read first.
 - 📦 **EPUB export.** `proseview export` compiles your scenes in the order

@@ -1179,6 +1179,104 @@ def test_terminal_sessions_outlive_a_page_reload(server: ProseviewServer):
 # ── static assets and rejections ────────────────────────────────────────────
 
 
+def test_file_api_creates_renames_and_trashes_a_scene(server: ProseviewServer):
+    created = server.post_json(
+        "/api/files/create",
+        {"parent": "manuscript/ch01", "name": "03-new-arrival", "kind": "file"},
+    )
+    assert created.status == 201, created.text
+    assert created.json()["path"] == "manuscript/ch01/03-new-arrival.md"
+    assert created.json()["scene_path"] == "ch01/03-new-arrival.md"
+    new_scene = server.root / created.json()["path"]
+    assert new_scene.read_bytes() == b""
+
+    new_scene.write_bytes(b"A first line.\n")
+    renamed = server.post_json(
+        "/api/files/rename",
+        {"path": created.json()["path"], "name": "03-renamed"},
+    )
+    assert renamed.status == 200, renamed.text
+    assert renamed.json()["path"] == "manuscript/ch01/03-renamed.md"
+    assert renamed.json()["scene_path"] == "ch01/03-renamed.md"
+    renamed_scene = server.root / renamed.json()["path"]
+    assert renamed_scene.read_bytes() == b"A first line.\n"
+    assert not new_scene.exists()
+
+    removed = server.post_json("/api/files/delete", {"path": renamed.json()["path"]})
+    assert removed.status == 200, removed.text
+    assert removed.json()["kind"] == "file"
+    assert removed.json()["entry_count"] == 1
+    assert not renamed_scene.exists()
+    assert (server.root / removed.json()["trash_path"]).read_bytes() == b"A first line.\n"
+
+
+def test_file_api_handles_folders_without_overwriting_content(server: ProseviewServer):
+    made = server.post_json(
+        "/api/files/create",
+        {"parent": "story-bible", "name": "Locations", "kind": "folder"},
+    )
+    assert made.status == 201, made.text
+    assert made.json()["path"] == "story-bible/Locations"
+    folder = server.root / made.json()["path"]
+    (folder / "market.md").write_text("Keep this.\n", encoding="utf-8")
+
+    duplicate = server.post_json(
+        "/api/files/create",
+        {"parent": "story-bible", "name": "Locations", "kind": "folder"},
+    )
+    assert duplicate.status == 409
+    assert (folder / "market.md").read_text(encoding="utf-8") == "Keep this.\n"
+
+    renamed = server.post_json(
+        "/api/files/rename", {"path": "story-bible/Locations", "name": "Places"}
+    )
+    assert renamed.status == 200, renamed.text
+    assert (server.root / "story-bible/Places/market.md").read_text(encoding="utf-8") == "Keep this.\n"
+
+    removed = server.post_json("/api/files/delete", {"path": "story-bible/Places"})
+    assert removed.status == 200, removed.text
+    assert removed.json()["kind"] == "folder"
+    assert removed.json()["entry_count"] == 1
+    assert (server.root / removed.json()["trash_path"] / "market.md").read_text(encoding="utf-8") == "Keep this.\n"
+
+
+def test_file_api_rejects_unsafe_or_unmanaged_mutations(server: ProseviewServer):
+    tokenless = server.post_json(
+        "/api/files/create",
+        {"parent": "manuscript/ch01", "name": "blocked", "kind": "file"},
+        headers={"X-Proseview-Session": ""},
+    )
+    assert tokenless.status == 403
+
+    outside = server.post_json(
+        "/api/files/create", {"parent": "scripts", "name": "blocked", "kind": "file"}
+    )
+    assert outside.status == 403
+    assert not (server.root / "scripts/blocked.md").exists()
+
+    traversal = server.post_json(
+        "/api/files/create",
+        {"parent": "manuscript/../../outside", "name": "blocked", "kind": "file"},
+    )
+    assert traversal.status == 400
+
+    protected = server.post_json(
+        "/api/files/rename", {"path": "manuscript", "name": "draft"}
+    )
+    assert protected.status == 403
+
+    linked = server.root / "story-bible/linked"
+    try:
+        linked.symlink_to(server.root / "scripts", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+    through_link = server.post_json(
+        "/api/files/create", {"parent": "story-bible/linked", "name": "blocked", "kind": "file"}
+    )
+    assert through_link.status == 400
+    assert not (server.root / "scripts/blocked.md").exists()
+
+
 def test_stylesheet_and_vendored_assets_are_served(shared_server: ProseviewServer):
     css = shared_server.get("/app.css")
     assert css.status == 200 and b"{" in css.body

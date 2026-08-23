@@ -48,7 +48,15 @@ from .generator import (
     build_scene_data,
 )
 from .lexical import paragraph_blocks, calculate_lexical_stats
-from .repo import read_repo_text, _file_node as _repo_file_node, resolve_visible_repository_path
+from .repo import (
+    _file_node as _repo_file_node,
+    create_repository_entry,
+    read_repo_text,
+    rename_repository_entry,
+    resolve_visible_repository_path,
+    scene_relative_path,
+    trash_repository_entry,
+)
 from .scenes import (
     collect_scene_stats, extract_scene_text, resolve_manuscript_dir, split_frontmatter,
 )
@@ -1040,7 +1048,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     get_html: Callable[[], str]
     get_analysis_json: Callable[[], bytes]
-    invalidate: Callable[[], None]
+    invalidate: Callable[..., None]
     subscribe: Callable[[], "queue.Queue[str]"]
     unsubscribe: Callable[["queue.Queue[str]"], None]
     publish_event: Callable[[dict[str, Any]], None]
@@ -1073,6 +1081,71 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             raise ContextError("JSON body must be an object")
         return body
+
+    def _handle_file_mutation(self, path: str) -> None:
+        """Apply one contained sidebar mutation and return its new route data."""
+        try:
+            body = self._read_json_limited(16 * 1024)
+            root = Path(self.repo_root).resolve()
+            cfg = Config.load(root)
+            if path == "/api/files/create":
+                result_path = create_repository_entry(
+                    root,
+                    cfg,
+                    str(body.get("parent") or ""),
+                    str(body.get("name") or ""),
+                    str(body.get("kind") or ""),
+                )
+                kind = str(body.get("kind") or "")
+                payload: dict[str, Any] = {
+                    "ok": True,
+                    "operation": "create",
+                    "path": result_path,
+                    "kind": kind,
+                }
+                status = 201
+                changed_paths = (result_path,)
+            elif path == "/api/files/rename":
+                old_path = str(body.get("path") or "")
+                old_target = resolve_visible_repository_path(root, old_path)
+                kind = "file" if old_target.is_file() else "folder"
+                result_path = rename_repository_entry(
+                    root, cfg, old_path, str(body.get("name") or "")
+                )
+                payload = {
+                    "ok": True,
+                    "operation": "rename",
+                    "old_path": old_path,
+                    "path": result_path,
+                    "kind": kind,
+                }
+                status = 200
+                changed_paths = (old_path, result_path)
+            elif path == "/api/files/delete":
+                result = trash_repository_entry(root, cfg, str(body.get("path") or ""))
+                payload = {"ok": True, "operation": "delete", **result}
+                status = 200
+                changed_paths = (str(result["path"]),)
+            else:  # defensive: the caller dispatches only the three paths
+                self._send_json({"ok": False, "error": "File endpoint not found"}, 404)
+                return
+
+            if payload["kind"] == "file":
+                scene_path = scene_relative_path(str(payload["path"]), cfg.manuscript_subdir)
+                if scene_path is not None:
+                    payload["scene_path"] = scene_path
+            self.invalidate("content", changed_paths)
+            self._send_json(payload, status)
+        except PermissionError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 403)
+        except FileNotFoundError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 404)
+        except FileExistsError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 409)
+        except (ContextError, ValueError) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 400)
+        except OSError as exc:
+            self._send_json({"ok": False, "error": f"File operation failed: {exc}"}, 500)
 
     @staticmethod
     def _is_loopback_authority(value: str) -> bool:
@@ -2029,6 +2102,9 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if not self._authorize_mutation():
             return
+        if path in {"/api/files/create", "/api/files/rename", "/api/files/delete"}:
+            self._handle_file_mutation(path)
+            return
         if path.startswith("/api/discuss/"):
             try:
                 body = self._read_json_limited()
@@ -2485,7 +2561,7 @@ class _Handler(BaseHTTPRequestHandler):
 def _make_handler(
     get_html: Callable[[], str],
     get_analysis_json: Callable[[], bytes],
-    invalidate: Callable[[], None],
+    invalidate: Callable[..., None],
     subscribe: Callable[[], "queue.Queue[str]"],
     unsubscribe: Callable[["queue.Queue[str]"], None],
     publish_event: Callable[[dict[str, Any]], None],

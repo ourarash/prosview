@@ -26,8 +26,11 @@ from proseview.repo import (  # noqa: E402
     build_repository_tree,
     build_sidebar_tree,
     build_tree,
+    create_repository_entry,
+    rename_repository_entry,
     resolve_visible_repository_path,
     scene_relative_path,
+    trash_repository_entry,
 )
 from proseview.scenes import iter_scene_paths  # noqa: E402
 
@@ -308,3 +311,151 @@ def test_visible_repository_path_rejects_symlinks_even_when_the_target_is_contai
 
     with pytest.raises(ValueError, match="safe visible repository"):
         resolve_visible_repository_path(tmp_path, "link.md")
+
+
+# ── File explorer mutations ─────────────────────────────────────────────────
+
+
+def _managed_repo(tmp_path: Path) -> Config:
+    (tmp_path / "manuscript" / "ch01").mkdir(parents=True)
+    (tmp_path / "story-bible" / "characters").mkdir(parents=True)
+    return Config()
+
+
+def test_create_repository_entry_adds_empty_markdown_and_one_folder(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+
+    created = create_repository_entry(
+        tmp_path, cfg, "manuscript/ch01", "03-café-at-dawn", "file"
+    )
+    folder = create_repository_entry(
+        tmp_path, cfg, "story-bible", "locations", "folder"
+    )
+
+    assert created == "manuscript/ch01/03-café-at-dawn.md"
+    assert (tmp_path / created).read_bytes() == b""
+    assert folder == "story-bible/locations"
+    assert (tmp_path / folder).is_dir()
+
+
+def test_create_repository_entry_never_overwrites_or_reaches_unmanaged_paths(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    existing = tmp_path / "manuscript" / "ch01" / "existing.md"
+    existing.write_bytes(b"keep me")
+    (tmp_path / "private").mkdir()
+
+    with pytest.raises(FileExistsError):
+        create_repository_entry(tmp_path, cfg, "manuscript/ch01", "existing", "file")
+    with pytest.raises(PermissionError, match="managed file-browser folder"):
+        create_repository_entry(tmp_path, cfg, "private", "escape", "file")
+    with pytest.raises(ValueError, match="single visible name"):
+        create_repository_entry(tmp_path, cfg, "manuscript/ch01", "../escape", "file")
+
+    assert existing.read_bytes() == b"keep me"
+    assert not (tmp_path / "private" / "escape.md").exists()
+
+
+def test_create_repository_entry_rejects_symlinked_parent(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = tmp_path / "manuscript" / "linked"
+    link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="safe visible repository"):
+        create_repository_entry(tmp_path, cfg, "manuscript/linked", "scene", "file")
+    assert not (outside / "scene.md").exists()
+
+
+def test_rename_repository_entry_preserves_markdown_extension_and_bytes(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    source = tmp_path / "manuscript" / "ch01" / "03-draft.md"
+    original = b"# Draft\n\nUnchanged prose.\n"
+    source.write_bytes(original)
+
+    renamed = rename_repository_entry(
+        tmp_path, cfg, "manuscript/ch01/03-draft.md", "03-final"
+    )
+
+    assert renamed == "manuscript/ch01/03-final.md"
+    assert not source.exists()
+    assert (tmp_path / renamed).read_bytes() == original
+
+
+def test_rename_repository_entry_moves_a_folder_without_rewriting_descendants(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    chapter = tmp_path / "manuscript" / "ch01"
+    scene = chapter / "01-opening.md"
+    scene.write_bytes(b"exact scene bytes\r\n")
+
+    renamed = rename_repository_entry(tmp_path, cfg, "manuscript/ch01", "chapter-one")
+
+    assert renamed == "manuscript/chapter-one"
+    assert (tmp_path / renamed / "01-opening.md").read_bytes() == b"exact scene bytes\r\n"
+    assert not chapter.exists()
+
+
+def test_rename_repository_entry_protects_roots_and_existing_destinations(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    chapter = tmp_path / "manuscript" / "ch01"
+    (chapter / "one.md").write_text("one", encoding="utf-8")
+    (chapter / "two.md").write_text("two", encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="top-level managed folder"):
+        rename_repository_entry(tmp_path, cfg, "manuscript", "draft")
+    with pytest.raises(FileExistsError):
+        rename_repository_entry(tmp_path, cfg, "manuscript/ch01/one.md", "two")
+
+    assert (chapter / "one.md").read_text(encoding="utf-8") == "one"
+    assert (chapter / "two.md").read_text(encoding="utf-8") == "two"
+
+
+def test_trash_repository_entry_preserves_a_nonempty_folder_for_recovery(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    chapter = tmp_path / "manuscript" / "ch01"
+    (chapter / "one.md").write_bytes(b"one\n")
+    (chapter / "notes").mkdir()
+    (chapter / "notes" / "private.txt").write_bytes(b"recoverable\n")
+
+    result = trash_repository_entry(tmp_path, cfg, "manuscript/ch01")
+    trashed = tmp_path / result["trash_path"]
+
+    assert result["path"] == "manuscript/ch01"
+    assert result["kind"] == "folder"
+    assert result["entry_count"] == 3
+    assert not chapter.exists()
+    assert trashed.is_relative_to(tmp_path / ".proseview" / "trash")
+    assert (trashed / "one.md").read_bytes() == b"one\n"
+    assert (trashed / "notes" / "private.txt").read_bytes() == b"recoverable\n"
+
+
+def test_trash_repository_entry_rejects_managed_roots_and_symlinks(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    outside = tmp_path / "delete-outside.md"
+    outside.write_text("safe", encoding="utf-8")
+    link = tmp_path / "manuscript" / "ch01" / "link.md"
+    link.symlink_to(outside)
+
+    with pytest.raises(PermissionError, match="top-level managed folder"):
+        trash_repository_entry(tmp_path, cfg, "manuscript")
+    with pytest.raises(ValueError, match="safe visible repository"):
+        trash_repository_entry(tmp_path, cfg, "manuscript/ch01/link.md")
+
+    assert outside.read_text(encoding="utf-8") == "safe"
+
+
+def test_trash_repository_entry_rejects_a_symlinked_trash_directory(tmp_path: Path):
+    cfg = _managed_repo(tmp_path)
+    scene = tmp_path / "manuscript" / "ch01" / "scene.md"
+    scene.write_text("keep me", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    internal = tmp_path / ".proseview"
+    internal.mkdir()
+    (internal / "trash").symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(PermissionError, match="must not be a symlink"):
+        trash_repository_entry(tmp_path, cfg, "manuscript/ch01/scene.md")
+
+    assert scene.read_text(encoding="utf-8") == "keep me"
+    assert list(elsewhere.iterdir()) == []

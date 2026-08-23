@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
+import unicodedata
+import uuid
 
 from .config import Config
 
@@ -116,6 +119,170 @@ def resolve_visible_repository_path(root: Path, value: str) -> Path:
     if has_symlink:
         raise ValueError("symlinks are not a safe visible repository path")
     return resolved
+
+
+_WINDOWS_RESERVED_NAME_RE = re.compile(
+    r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$", re.IGNORECASE
+)
+_PORTABLE_NAME_FORBIDDEN = frozenset('<>:"/\\|?*')
+
+
+def _portable_entry_name(value: str) -> str:
+    """Return one portable, visible file-browser name.
+
+    Proseview supports Windows as well as POSIX. Rejecting the strictest common
+    set here means a project created on macOS can still be cloned and edited on
+    Windows without names that cannot be checked out or renamed there.
+    """
+    name = unicodedata.normalize("NFC", str(value or "").strip())
+    if (
+        not name
+        or name in {".", ".."}
+        or name.startswith(".")
+        or name.endswith((".", " "))
+        or any(char in _PORTABLE_NAME_FORBIDDEN or ord(char) < 32 for char in name)
+        or _WINDOWS_RESERVED_NAME_RE.fullmatch(name)
+        or len(name.encode("utf-8")) > 240
+    ):
+        raise ValueError("name must be a single visible name that works on every supported platform")
+    return name
+
+
+def _managed_repository_roots(root: Path, cfg: Config) -> tuple[Path, ...]:
+    """Existing top-level folders represented by the file-browser sidebar."""
+    resolved_root = root.resolve()
+    configured = (cfg.manuscript_subdir, *cfg.repo_tab.folders)
+    managed: list[Path] = []
+    for value in configured:
+        relative = str(value or "").strip("/").strip()
+        if not relative:
+            continue
+        try:
+            candidate = resolve_visible_repository_path(resolved_root, relative)
+        except ValueError:
+            continue
+        if candidate.is_dir() and candidate not in managed:
+            managed.append(candidate)
+    return tuple(managed)
+
+
+def _resolve_managed_repository_path(root: Path, cfg: Config, value: str) -> tuple[Path, tuple[Path, ...]]:
+    resolved_root = root.resolve()
+    candidate = resolve_visible_repository_path(resolved_root, value)
+    managed = _managed_repository_roots(resolved_root, cfg)
+    if not any(candidate == folder or candidate.is_relative_to(folder) for folder in managed):
+        raise PermissionError("path is outside a managed file-browser folder")
+    return candidate, managed
+
+
+def _entry_name_for_kind(name: str, kind: str, source: Path | None = None) -> str:
+    if kind not in {"file", "folder"}:
+        raise ValueError("kind must be file or folder")
+    portable = _portable_entry_name(name)
+    if kind == "file" and (source is None or source.suffix.lower() == ".md"):
+        if portable.lower().endswith(".md"):
+            portable = portable[:-3]
+            portable = _portable_entry_name(portable)
+        portable += ".md"
+    return portable
+
+
+def create_repository_entry(
+    root: Path,
+    cfg: Config,
+    parent_path: str,
+    name: str,
+    kind: str,
+) -> str:
+    """Create one empty Markdown file or one folder in the visible sidebar.
+
+    Parent directories are never created implicitly and existing paths are
+    never overwritten. The returned path is repository-relative POSIX text.
+    """
+    resolved_root = root.resolve()
+    parent, _managed = _resolve_managed_repository_path(resolved_root, cfg, parent_path)
+    if not parent.is_dir():
+        raise FileNotFoundError("parent folder does not exist")
+    entry_name = _entry_name_for_kind(name, kind)
+    # Build from the already validated, resolved parent. Reusing the raw input
+    # here would interpret Windows-style separators differently on POSIX.
+    relative = (parent.relative_to(resolved_root) / entry_name).as_posix()
+    target = resolve_visible_repository_path(resolved_root, relative)
+    if target.parent != parent:
+        raise ValueError("target must stay inside the selected folder")
+    if target.exists():
+        raise FileExistsError(f"{relative} already exists")
+    if kind == "folder":
+        target.mkdir()
+    else:
+        with target.open("xb"):
+            pass
+    return target.relative_to(resolved_root).as_posix()
+
+
+def rename_repository_entry(
+    root: Path,
+    cfg: Config,
+    path: str,
+    new_name: str,
+) -> str:
+    """Rename a visible file or nested folder without changing its parent."""
+    resolved_root = root.resolve()
+    source, managed = _resolve_managed_repository_path(resolved_root, cfg, path)
+    if not source.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    if source in managed:
+        raise PermissionError("top-level managed folders cannot be renamed")
+    if not (source.is_file() or source.is_dir()):
+        raise ValueError("path must name a regular file or folder")
+    kind = "file" if source.is_file() else "folder"
+    entry_name = _entry_name_for_kind(new_name, kind, source)
+    destination_rel = (source.relative_to(resolved_root).parent / entry_name).as_posix()
+    destination = resolve_visible_repository_path(resolved_root, destination_rel)
+    if destination == source:
+        return destination_rel
+    if destination.exists():
+        raise FileExistsError(f"{destination_rel} already exists")
+    source.rename(destination)
+    return destination.relative_to(resolved_root).as_posix()
+
+
+def trash_repository_entry(root: Path, cfg: Config, path: str) -> dict[str, Any]:
+    """Move a visible file or nested folder into Proseview's local trash.
+
+    Moving instead of recursively unlinking keeps deletion recoverable without
+    adding a restore workflow to the sidebar. The trash lives on the same
+    filesystem under ``.proseview/``, so the move is a single rename.
+    """
+    resolved_root = root.resolve()
+    source, managed = _resolve_managed_repository_path(resolved_root, cfg, path)
+    if not source.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    if source in managed:
+        raise PermissionError("top-level managed folders cannot be deleted")
+    if not (source.is_file() or source.is_dir()):
+        raise ValueError("path must name a regular file or folder")
+
+    kind = "file" if source.is_file() else "folder"
+    entry_count = 1 if kind == "file" else sum(1 for _entry in source.rglob("*"))
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    internal = resolved_root / ".proseview"
+    trash = internal / "trash"
+    if internal.is_symlink() or trash.is_symlink():
+        raise PermissionError("Proseview Trash must not be a symlink")
+    trash.mkdir(parents=True, exist_ok=True)
+    if not trash.resolve().is_relative_to(resolved_root):
+        raise PermissionError("Proseview Trash resolves outside the repository")
+    bucket = trash / f"{stamp}-{uuid.uuid4().hex[:8]}"
+    destination = bucket / source.relative_to(resolved_root)
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    source.rename(destination)
+    return {
+        "path": source.relative_to(resolved_root).as_posix(),
+        "kind": kind,
+        "entry_count": entry_count,
+        "trash_path": destination.relative_to(resolved_root).as_posix(),
+    }
 
 
 def scene_relative_path(rel: str, manuscript_subdir: str) -> str | None:
