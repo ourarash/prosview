@@ -31,7 +31,7 @@ takes roughly 15 seconds against the synthetic novel in
 | Tier | Location | What it does |
 | --- | --- | --- |
 | Unit | `tests/test_*.py` | Analytics, scene parsing, config, history. No I/O beyond the fixture repo. |
-| HTTP end-to-end | `tests/e2e/test_server_e2e.py` | Boots a real `python -m proseview` subprocess and drives it over HTTP. Asserts bytes on disk, SSE frames, and PTY output. Stdlib only. |
+| HTTP end-to-end | `tests/e2e/test_server_e2e.py` | Boots a real `python -m proseview` subprocess and drives it over HTTP. Asserts bytes on disk and SSE frames. Stdlib only. |
 | Browser end-to-end | `tests/e2e/test_browser_e2e.py` | Drives the real UI in Chromium via Playwright. Required in CI; opt-in locally. |
 
 Both end-to-end tiers work on a throwaway copy of `fixtures/demo-repo`,
@@ -59,10 +59,9 @@ instead of a silent refetch — worth doing in CI. After changing the pinned
 versions in `templates/index.html.j2`, delete that directory and run the
 tier once with network access to repopulate it.
 
-Agents are covered without Codex, Claude, or Gemini installed: the harness
-puts stub executables of those names on `PATH` that announce themselves and
-echo whatever is typed at them, which is enough to prove the spawn and the
-selection handoff both work.
+Agents are covered without Codex or Claude installed: the harness puts a
+deterministic `codex` app-server stub on `PATH`, and replaces the Claude
+Agent SDK with `tests/e2e/fake_claude_sdk`.
 
 To exercise the live dashboard while you work:
 
@@ -79,7 +78,7 @@ Edits to Python require a server restart.
 ```
 proseview/
 ├── cli.py                 entry points (serve, init)
-├── server.py              HTTP server, save-scene, terminal PTY
+├── server.py              HTTP server, save-scene, SSE live reload
 ├── generator.py           Jinja-rendered HTML + build_scene_data()
 ├── config.py              .proseview.yaml loader (PyYAML)
 ├── scenes.py              scene parsing, scan_todos / scan_notes

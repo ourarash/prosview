@@ -6,19 +6,15 @@ already installed on your machine, under your login.
 
 [← back to the README](../README.md)
 
-Four places where AI shows up, all opt-in:
+Three places where AI shows up, all opt-in:
 
 1. **Selection menu.** Highlight any text in a scene. The pill that
-   appears includes `Add TODO`, `Add Note`, and (if the corresponding
-   tools are installed locally) `Run in Codex` and `Skills`. Skills are
+   appears includes `Add TODO`, `Add Note`, and (if an agent is installed
+   locally) `Ask about selection` and `Skills`. Skills are
    reusable prompts you keep in `.proseview/skills/<name>/SKILL.md`; they show up
    automatically in the menu. Skills are discovered by Codex today — the
    Claude tab's picker is still empty.
-2. **Agent menu.** From the scene header, launch a conversation with
-   Codex, Claude, or Gemini scoped to that file. The conversation runs
-   in the in-browser terminal so you can keep reading the prose
-   underneath while the agent works.
-3. **Discuss, on either agent.** The side dock has a **Codex** tab and a
+2. **Discuss, on either agent.** The side dock has a **Codex** tab and a
    **Claude** tab. Each has a separate project conversation, with its own queue,
    history, and approvals — ask one, switch agents or open another file, and
    both keep working. `discuss.agent` decides which tab opens first; both tabs
@@ -117,7 +113,7 @@ Four places where AI shows up, all opt-in:
    come first, duplicates are removed, and additional presets are available
    under **More**. Recent instructions are kept out of the inline preset row;
    open **More** to reuse or star one as a personal preset.
-4. **TODOs as Markdown.** Every TODO and Note is a plain
+3. **TODOs as Markdown.** Every TODO and Note is a plain
    `<!-- TODO: ... -->` or `<!-- NOTE[tag]: ... -->` comment in the
    scene file. Your AI assistant can see them through the file, your
    repo can track them through git, and you can grep them.

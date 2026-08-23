@@ -9,9 +9,7 @@ No browser is involved; the browser-only surface lives in ``test_browser_e2e.py`
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -19,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from .conftest import (
-    AGENT_MARKER,
     ANNOTATED_SCENE_REL,
     BARE_SCENE_REL,
     LARGE_SCENE_REL,
@@ -27,7 +24,6 @@ from .conftest import (
     ProseviewServer,
 )
 
-POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="PTY terminals are POSIX-only")
 
 
 def _discuss_token(server: ProseviewServer) -> str:
@@ -448,7 +444,6 @@ def test_event_streams_reject_a_stale_server_session_without_subscribing(
     assert server.get(
         "/api/discuss/conversations/not-open/events" + stale_query
     ).status == 204
-    assert server.get("/terminal-output/not-open" + stale_query).status == 204
     assert server.get("/events").status == 204
 
 
@@ -1144,127 +1139,6 @@ def test_editing_a_scene_on_disk_pushes_a_reload_event(server: ProseviewServer):
         assert frame == "reload"
 
 
-# ── terminal and agents ─────────────────────────────────────────────────────
-
-
-def _terminal_text(server: ProseviewServer, tid: str, needle: str, timeout: float = 15.0) -> str:
-    """Accumulate PTY output until *needle* appears.
-
-    Frames are base64-encoded chunks of raw terminal bytes, so a marker can be
-    split across frames -- always match against the accumulation.
-    """
-    seen = ""
-    with server.sse(f"/terminal-output/{tid}") as stream:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            frame = stream.next(timeout=max(0.1, deadline - time.monotonic()))
-            if frame in ("connected", "__exit__"):
-                if frame == "__exit__":
-                    break
-                continue
-            try:
-                seen += base64.b64decode(frame).decode("utf-8", errors="replace")
-            except Exception:
-                continue
-            if needle in seen:
-                return seen
-    raise AssertionError(f"{needle!r} never appeared in terminal output; saw {seen!r}")
-
-
-@POSIX_ONLY
-def test_terminal_streams_output_from_a_spawned_command(server: ProseviewServer):
-    resp = server.post_json("/terminal-spawn", {
-        "command": ["echo", "proseview-e2e-marker"],
-        "type": "shell", "label": "Shell 1", "rows": 24, "cols": 80,
-    })
-    assert resp.status == 200
-    assert "proseview-e2e-marker" in _terminal_text(
-        server, resp.json()["id"], "proseview-e2e-marker"
-    )
-
-
-@POSIX_ONLY
-def test_terminal_session_is_listed_while_alive_and_killable(server: ProseviewServer):
-    """``/terminal-list`` reports only live sessions, so the command has to
-    outlive the request -- ``echo`` would already be reaped."""
-    tid = server.post_json("/terminal-spawn", {
-        "command": ["sh", "-c", "echo proseview-ready; cat"],
-        "type": "shell", "label": "Shell 1",
-    }).json()["id"]
-    _terminal_text(server, tid, "proseview-ready")
-
-    sessions = server.get_json("/terminal-list")["sessions"]
-    assert any(s["id"] == tid and s["label"] == "Shell 1" and s["alive"] for s in sessions)
-
-    assert server.post_json("/terminal-kill", {"id": tid}).json() == {"ok": True}
-    assert all(s["id"] != tid for s in server.get_json("/terminal-list")["sessions"])
-
-
-@POSIX_ONLY
-@pytest.mark.parametrize("agent", ["codex", "claude", "gemini"])
-def test_agent_launch_runs_the_real_binary_from_path(server: ProseviewServer, agent: str):
-    """The agent handoff is a plain terminal spawn of the agent's own command.
-
-    A stub on PATH stands in for the real tool, so this proves the spawn reaches
-    an executable and is tagged with the right session type -- the part
-    Proseview owns.
-    """
-    resp = server.post_json("/terminal-spawn", {
-        "command": [agent], "type": agent, "label": f"{agent.title()} 1",
-    })
-    assert resp.status == 200
-    tid = resp.json()["id"]
-
-    assert f"{AGENT_MARKER} {agent}" in _terminal_text(server, tid, f"{AGENT_MARKER} {agent}")
-    assert any(s["type"] == agent for s in server.get_json("/terminal-list")["sessions"])
-
-
-@POSIX_ONLY
-def test_codex_auto_approve_passes_the_full_auto_flag(server: ProseviewServer):
-    """Auto-approve is expressed purely as argv, so the stub can echo it back."""
-    tid = server.post_json("/terminal-spawn", {
-        "command": ["codex", "--full-auto"], "type": "codex",
-    }).json()["id"]
-    assert "argv:--full-auto" in _terminal_text(server, tid, "argv:--full-auto")
-
-
-@POSIX_ONLY
-def test_selection_and_instruction_reach_the_agent_process(server: ProseviewServer):
-    """The prompt is delivered as keystrokes, not as a spawn argument.
-
-    ``/terminal-input`` is the only channel carrying the selected passage to the
-    agent, so a regression there would silently strip the user's context while
-    still appearing to launch the agent correctly.
-    """
-    tid = server.post_json("/terminal-spawn", {"command": ["codex"], "type": "codex"}).json()["id"]
-    _terminal_text(server, tid, AGENT_MARKER)
-
-    prompt = "Tighten this passage: the slow algebra of yesterday's receipts\n"
-    assert server.post_json("/terminal-input", {
-        "id": tid,
-        "data": base64.b64encode(prompt.encode()).decode(),
-    }).json() == {"ok": True}
-
-    assert "STDIN:Tighten this passage" in _terminal_text(server, tid, "STDIN:Tighten this passage")
-
-
-@POSIX_ONLY
-def test_terminal_sessions_outlive_a_page_reload(server: ProseviewServer):
-    """``/terminal-list`` is what lets a reloaded page reattach instead of
-    losing every running agent."""
-    tid = server.post_json("/terminal-spawn", {"command": ["codex"], "type": "codex"}).json()["id"]
-    _terminal_text(server, tid, AGENT_MARKER)
-
-    # A reload re-fetches the page; the PTY must be untouched by it.
-    assert server.get("/").status == 200
-    session = next(s for s in server.get_json("/terminal-list")["sessions"] if s["id"] == tid)
-    assert session["alive"] is True
-    assert session["command"] == ["codex"]
-
-    # Scrollback replays to the reattaching client.
-    assert AGENT_MARKER in _terminal_text(server, tid, AGENT_MARKER)
-
-
 # ── static assets and rejections ────────────────────────────────────────────
 
 
@@ -1370,8 +1244,8 @@ def test_stylesheet_and_vendored_assets_are_served(shared_server: ProseviewServe
     css = shared_server.get("/app.css")
     assert css.status == 200 and b"{" in css.body
 
-    xterm = shared_server.get("/vendor/xterm.js")
-    assert xterm.status == 200 and len(xterm.body) > 1000
+    chart = shared_server.get("/vendor/chart.js")
+    assert chart.status == 200 and len(chart.body) > 1000
 
 
 def test_repo_file_returns_a_preview_node(shared_server: ProseviewServer):

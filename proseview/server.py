@@ -17,7 +17,6 @@ import queue
 import re
 import select
 import signal
-import struct
 import tempfile
 import threading
 import uuid
@@ -28,17 +27,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Any
-
-try:
-    # All three are Unix-only and used solely by the in-browser terminal.
-    # `fcntl` used to be imported at module scope, so importing proseview at all
-    # failed on Windows -- the dashboard never got a chance to run without it.
-    import fcntl
-    import pty
-    import termios
-    _PTY_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised on Windows
-    _PTY_AVAILABLE = False
 
 from .config import Config
 from .codex_app_server import CodexAuthError, CodexProtocolError, CodexUnavailableError
@@ -739,189 +727,6 @@ def save_scene_content(
     _atomic_write_text(resolved, new_raw)
 
 
-# ── In-browser terminal sessions ─────────────────────────────────────────────
-
-_terminals: dict[str, "TerminalSession"] = {}
-_terminals_lock = threading.Lock()
-
-
-class TerminalSession:
-    # 512 KB of raw PTY output kept per session, used to replay scrollback
-    # to reconnecting clients (e.g. after a page reload). xterm.js can
-    # process the full buffer in one write() because the data still has
-    # all its VT/ANSI escape sequences in order.
-    BUFFER_MAX = 512 * 1024
-
-    def __init__(
-        self,
-        terminal_id: str,
-        pid: int,
-        fd: int,
-        *,
-        command: list[str] | None = None,
-        type: str = "shell",
-        label: str = "",
-    ) -> None:
-        self.id = terminal_id
-        self.pid = pid
-        self.fd = fd
-        self.command = list(command or [])
-        self.type = type
-        self.label = label
-        self._subscribers: list[queue.Queue] = []
-        self._sub_lock = threading.Lock()
-        # Held while mutating both _buffer and _subscribers, so a reconnecting
-        # client gets a buffer snapshot that's strictly older than every
-        # event delivered to its queue (no missed bytes, no duplicates).
-        self._buffer = bytearray()
-        self.alive = True
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
-
-    def _read_loop(self) -> None:
-        while self.alive:
-            try:
-                r, _, _ = select.select([self.fd], [], [], 0.1)
-                if r:
-                    data = os.read(self.fd, 4096)
-                    if not data:
-                        break
-                    encoded = base64.b64encode(data).decode()
-                    with self._sub_lock:
-                        self._buffer.extend(data)
-                        if len(self._buffer) > self.BUFFER_MAX:
-                            del self._buffer[: len(self._buffer) - self.BUFFER_MAX]
-                        for q in list(self._subscribers):
-                            try:
-                                q.put_nowait(encoded)
-                            except queue.Full:
-                                pass
-            except OSError:
-                break
-        self.alive = False
-        with self._sub_lock:
-            for q in list(self._subscribers):
-                try:
-                    q.put_nowait("__exit__")
-                except queue.Full:
-                    pass
-        try:
-            os.waitpid(self.pid, os.WNOHANG)
-        except (ChildProcessError, OSError):
-            pass
-        # Drop the dead session from the registry so /terminal-list stays
-        # clean and doesn't try to reattach the client to a corpse.
-        with _terminals_lock:
-            _terminals.pop(self.id, None)
-
-    def write(self, data: bytes) -> None:
-        try:
-            os.write(self.fd, data)
-        except OSError:
-            pass
-
-    def resize(self, rows: int, cols: int) -> None:
-        try:
-            fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        except OSError:
-            pass
-
-    def kill(self) -> None:
-        self.alive = False
-        try:
-            os.kill(self.pid, signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
-        try:
-            os.close(self.fd)
-        except OSError:
-            pass
-
-    def subscribe(self) -> tuple[bytes, queue.Queue]:
-        """Atomically snapshot the scrollback buffer and register a queue.
-
-        The snapshot is what should be written to the client's xterm before
-        any events from the queue are processed. Holding _sub_lock across
-        both operations guarantees no bytes are lost or duplicated relative
-        to the live PTY stream.
-        """
-        q: queue.Queue = queue.Queue(maxsize=256)
-        with self._sub_lock:
-            snapshot = bytes(self._buffer)
-            self._subscribers.append(q)
-        return snapshot, q
-
-    def unsubscribe(self, q: queue.Queue) -> None:
-        with self._sub_lock:
-            try:
-                self._subscribers.remove(q)
-            except ValueError:
-                pass
-
-
-def _default_shell() -> str:
-    """Pick a shell when ``$SHELL`` is unset.
-
-    ``$SHELL`` is absent in plenty of real contexts -- systemd units, Docker
-    images, CI runners, launchd jobs. Hardcoding ``/bin/zsh`` meant every
-    terminal and agent launch failed outright on images that don't ship it,
-    which is most Linux ones. Fall back to whatever is actually present.
-    """
-    for candidate in ("/bin/zsh", "/bin/bash", "/bin/sh"):
-        if os.path.exists(candidate):
-            return candidate
-    return "/bin/sh"
-
-
-def spawn_terminal(
-    command: list[str],
-    cwd: str | None = None,
-    rows: int = 24,
-    cols: int = 80,
-    *,
-    type: str = "shell",
-    label: str = "",
-) -> "TerminalSession":
-    if not _PTY_AVAILABLE:
-        raise RuntimeError("pty module not available on this platform")
-    import shlex
-    env = dict(os.environ)
-    env["TERM"] = "xterm-256color"
-    env["COLORTERM"] = "truecolor"
-    env["NO_UPDATE_NOTIFIER"] = "1"
-    # Wrap in a login shell so the user's PATH (nvm, npm globals, pyenv, etc.) is loaded.
-    # `exec` replaces the shell with the command so no shell prompt appears.
-    shell = env.get("SHELL") or _default_shell()
-    shell_name = os.path.basename(shell)
-    if not command:
-        # Plain interactive login shell (used by the "$ Shell" button)
-        wrapped = [shell, "-l", "-i"] if shell_name != "fish" else [shell, "--login", "--interactive"]
-    elif shell_name == "fish":
-        wrapped = [shell, "--login", "-c", shlex.join(command)]
-    else:
-        wrapped = [shell, "-l", "-c", "exec " + shlex.join(command)]
-    pid, fd = pty.fork()
-    if pid == 0:
-        if cwd:
-            try:
-                os.chdir(cwd)
-            except OSError:
-                pass
-        os.execvpe(wrapped[0], wrapped, env)
-        os._exit(1)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    terminal_id = uuid.uuid4().hex[:8]
-    session = TerminalSession(
-        terminal_id,
-        pid,
-        fd,
-        command=command,
-        type=type,
-        label=label,
-    )
-    with _terminals_lock:
-        _terminals[terminal_id] = session
-    return session
 
 
 class _AnnotationAnchorError(ValueError):
@@ -1534,8 +1339,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle_repo_file(self) -> None:
         """Return a fresh single-file node so the client can refresh a preview
-        without reloading the whole page (which would tear down terminal
-        sessions). Mirrors the shape produced by ``proseview.repo._file_node``.
+        without reloading the whole page. Mirrors the shape produced by
+        ``proseview.repo._file_node``.
         """
         try:
             qs = parse_qs(urlparse(self.path).query)
@@ -1732,7 +1537,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         # Reads are not token-gated (a browser navigating here cannot send a
         # custom header), but they must still address us as localhost so a
-        # rebound hostname cannot pull scene text or terminal output.
+        # rebound hostname cannot pull scene text or conversation output.
         if not self._is_local_request():
             self._send_json({"ok": False, "error": "request must come from this local Proseview server"}, 403)
             return
@@ -1749,51 +1554,6 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send_json({"ok": True, "snapshot": self.discuss_manager.get_snapshot(conversation_id)})
                 except Exception as exc:
                     self._send_discuss_error(exc)
-            return
-        if self.path.startswith("/terminal-output/"):
-            # Allow query string (e.g. /terminal-output/<id>?...).
-            if not self._authorize_event_stream_generation():
-                return
-            tid = urlparse(self.path).path.split("/")[-1]
-            with _terminals_lock:
-                session = _terminals.get(tid)
-            if not session:
-                self.send_response(404)
-                self.end_headers()
-                return
-            snapshot, q = session.subscribe()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
-                self.end_headers()
-                self.wfile.write(b"data: connected\n\n")
-                # Replay scrollback as a single base64 SSE frame so a
-                # reconnecting client (after a page reload) sees its prior
-                # output. For freshly-spawned sessions this is empty.
-                if snapshot:
-                    encoded = base64.b64encode(snapshot).decode()
-                    self.wfile.write(f"data: {encoded}\n\n".encode())
-                self.wfile.flush()
-                while True:
-                    try:
-                        msg = q.get(timeout=5)
-                        if msg == "__exit__":
-                            self.wfile.write(b"data: __exit__\n\n")
-                            self.wfile.flush()
-                            break
-                        self.wfile.write(f"data: {msg}\n\n".encode())
-                        self.wfile.flush()
-                    except queue.Empty:
-                        if not session.alive:
-                            break
-                        self.wfile.write(b": heartbeat\n\n")
-                        self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
-            finally:
-                session.unsubscribe(q)
             return
         if discuss_path == "/events":
             if not self._authorize_event_stream_generation():
@@ -2150,24 +1910,6 @@ class _Handler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/repo-file"):
             self._handle_repo_file()
-            return
-        if self.path == "/terminal-list":
-            # Live PTY sessions known to this server. Used by the client on
-            # page load to reattach existing terminal tabs after a reload
-            # so an HTML/JS asset refresh is non-destructive.
-            with _terminals_lock:
-                items = [
-                    {
-                        "id": s.id,
-                        "type": s.type,
-                        "label": s.label,
-                        "command": s.command,
-                        "alive": s.alive,
-                    }
-                    for s in _terminals.values()
-                    if s.alive
-                ]
-            self._send_json({"ok": True, "sessions": items})
             return
         if self.path.startswith("/app.css"):
             try:
@@ -2659,66 +2401,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
-        elif self.path == "/terminal-spawn":
-            try:
-                command = body.get("command", ["codex"])
-                cwd = self.repo_root  # always run from repo root so AGENTS.md is visible
-                rows = int(body.get("rows", 24))
-                cols = int(body.get("cols", 120))
-                t_type = str(body.get("type") or "shell")
-                t_label = str(body.get("label") or "")
-                session = spawn_terminal(
-                    command,
-                    cwd=cwd,
-                    rows=rows,
-                    cols=cols,
-                    type=t_type,
-                    label=t_label,
-                )
-                self._send_json({"ok": True, "id": session.id})
-            except _FileConflictError as exc:
-                self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 500)
-        elif self.path == "/terminal-input":
-            try:
-                tid = body["id"]
-                data = base64.b64decode(body["data"])
-                with _terminals_lock:
-                    session = _terminals.get(tid)
-                if session:
-                    session.write(data)
-                self._send_json({"ok": True})
-            except _FileConflictError as exc:
-                self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 500)
-        elif self.path == "/terminal-resize":
-            try:
-                tid = body["id"]
-                rows = int(body.get("rows", 24))
-                cols = int(body.get("cols", 120))
-                with _terminals_lock:
-                    session = _terminals.get(tid)
-                if session:
-                    session.resize(rows, cols)
-                self._send_json({"ok": True})
-            except _FileConflictError as exc:
-                self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 500)
-        elif self.path == "/terminal-kill":
-            try:
-                tid = body["id"]
-                with _terminals_lock:
-                    session = _terminals.pop(tid, None)
-                if session:
-                    session.kill()
-                self._send_json({"ok": True})
-            except _FileConflictError as exc:
-                self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 500)
         else:
             self.send_response(404)
             self.end_headers()
@@ -2802,13 +2484,12 @@ def serve(
 
         ``kind`` controls the SSE message:
         - ``"content"`` (default) -> ``reload`` so existing clients re-fetch
-          ``/data.json`` and re-render the open scene without losing terminal
-          sessions.
+          ``/data.json`` and re-render the open scene without losing the
+          open conversation.
         - ``"css"`` -> ``reload:css`` so the client hot-swaps the inlined
           stylesheet from ``/app.css``.
         - ``"html"`` (or ``"js"``) -> ``reload:html`` so the client surfaces a
-          banner offering a full page reload (which the user can defer to
-          preserve in-browser terminals).
+          banner offering a full page reload (which the user can defer).
         """
         with lock:
             _stale[0] = True
@@ -2861,8 +2542,7 @@ def serve(
     # Asset watcher: poll the proseview templates dir on its own loop so edits
     # to .css / .js / .j2 files trigger an SSE event without restarting the
     # server. CSS-only changes are hot-swapped in the browser; .js and .j2
-    # changes raise a "Reload to apply" banner that the user can defer so
-    # in-browser terminal sessions are not lost.
+    # changes raise a "Reload to apply" banner that the user can defer.
     def _snap_assets() -> dict[str, tuple[int, int]]:
         result: dict[str, tuple[int, int]] = {}
         try:

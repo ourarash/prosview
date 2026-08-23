@@ -168,17 +168,6 @@ def character_name_from_file(path: Path) -> str:
     return path.stem.replace("-", " ").replace("_", " ").title()
 
 
-def _terminal_available() -> bool:
-    """Whether this platform can host the in-browser terminal.
-
-    Windows has no ``pty``/``fcntl``, so the shell is hidden there rather than
-    offered and then failing when clicked.
-    """
-    from .server import _PTY_AVAILABLE
-
-    return bool(_PTY_AVAILABLE)
-
-
 def _js_json(data: object) -> str:
     """Return a JS expression ``JSON.parse('...')`` that evaluates to *data*.
 
@@ -559,7 +548,7 @@ def build_analysis_payload(root: Path, cfg: Config | None = None) -> dict[str, o
             display_scenes, root, cfg, _editor_label(cfg), analysis=True
         ),
         # Same shapes the template used to inject, so the existing Chart.js
-        # setup in 70-terminal.js builds them without changes.
+        # setup in 70-dashboard.js builds them without changes.
         "scatterChart": {
             "datasets": [
                 {
@@ -731,7 +720,6 @@ def render_html_report(
         "sidebar_tree_json": _js_json(sidebar_nodes),
         "repository_tree_json": _js_json(repository_nodes),
         "repo_preview_max": cfg.repo_tab.preview_max_bytes,
-        "terminal_available_json": _js_json(_terminal_available()),
         "images_config_json": _js_json(
             {"mode": cfg.images.mode, "remoteInAgentOutput": cfg.images.remote_in_agent_output}
         ),

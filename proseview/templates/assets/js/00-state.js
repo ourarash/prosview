@@ -129,8 +129,7 @@ let currentTab = 'overview';
         const OVERLAY_MIN_PROSE_WIDTH = 420;
 
         function _dockWouldCrushTheProse(logicalViewportWidth) {
-            if (!document.body.classList.contains('discuss-open')
-                && !document.body.classList.contains('terminal-right-open')) return false;
+            if (!document.body.classList.contains('discuss-open')) return false;
             const dock = Math.min(
                 parseFloat(getComputedStyle(document.documentElement)
                     .getPropertyValue('--utility-dock-w')) || 504,
@@ -203,8 +202,7 @@ let currentTab = 'overview';
             const root = document.documentElement;
             const sidebar = document.getElementById('repoSidebar');
             if (!sidebar) return;
-            const utilityDockOpen = document.body.classList.contains('discuss-open')
-                || document.body.classList.contains('terminal-right-open');
+            const utilityDockOpen = document.body.classList.contains('discuss-open');
             const compactDock = utilityDockOpen && window.matchMedia('(max-width: 1120px)').matches;
             const responsivelyRetracted = window.matchMedia('(max-width: 700px)').matches
                 || root.dataset.cssZoom === 'true'

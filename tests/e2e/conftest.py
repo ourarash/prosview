@@ -378,18 +378,15 @@ def _install_stub(bin_dir: Path, name: str, source: str) -> None:
 
 
 def _write_agent_stubs(bin_dir: Path) -> Path:
-    """Create fake ``codex`` / ``claude`` / ``gemini`` executables.
+    """Create fake ``codex`` / ``claude`` executables.
 
-    The real agent handoff sends ``command: ["codex"]`` to ``/terminal-spawn``
-    and then types the prompt into the PTY as keystrokes. A stub that announces
-    itself, echoes its argv, and then echoes stdin lets a test prove both halves
-    of that contract without the real tools installed.
-
-    The trailing read loop matters: an agent that exits immediately would tear
-    the session down before the browser finished typing the prompt.
+    ``codex`` is a full app-server stub -- the protocol Discuss actually
+    speaks. ``claude`` only has to exist: the Claude client gates on
+    ``shutil.which("claude")`` before handing off to the SDK, which the
+    tests replace with ``tests/e2e/fake_claude_sdk``.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("claude", "gemini"):
+    for name in ("claude",):
         # Python rather than /bin/sh: Windows has neither sh nor shebang
         # handling, and one language for every stub means one wrapper below.
         _install_stub(
@@ -724,8 +721,8 @@ class SseStream:
         """Tear the stream down without waiting for the server.
 
         The pump thread is parked in a blocking ``readline`` and the server only
-        writes again on its heartbeat -- 5s for terminal output, 15s for
-        ``/events``. Plain ``close()`` would inherit that latency on every test.
+        writes again on its heartbeat -- 15s for ``/events``. Plain
+        ``close()`` would inherit that latency on every test.
         Shutting the socket down first makes the pending read fail immediately.
         """
         try:
@@ -892,20 +889,13 @@ def _free_port() -> int:
 def _server_env(bin_dir: Path, home: Path) -> dict[str, str]:
     """Environment for the server subprocess.
 
-    Two entries carry real weight:
-
-    ``SHELL`` -- ``spawn_terminal`` falls back to ``/bin/zsh`` when it is unset,
-    which does not exist on the Ubuntu CI image.
-
-    ``HOME`` -- terminal commands are wrapped in ``$SHELL -l -c``. A *login*
-    shell sources the developer's real profile, which routinely rewrites PATH
-    and would shadow our agent stubs with whatever is actually installed.
-    Pointing HOME at an empty directory keeps the spawn hermetic.
+    ``PATH`` puts the agent stubs first, and ``HOME`` points at an empty
+    directory so the developer's real profile cannot shadow them with
+    whatever is actually installed.
     """
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["HOME"] = str(home)
-    env["SHELL"] = "/bin/bash" if Path("/bin/bash").exists() else "/bin/sh"
     fake_claude_sdk = REPO_ROOT / "tests" / "e2e" / "fake_claude_sdk"
     env["PYTHONPATH"] = os.pathsep.join(
         [str(fake_claude_sdk), str(REPO_ROOT), env.get("PYTHONPATH", "")]

@@ -21,21 +21,20 @@ class _AppJs:
 APP_JS = _AppJs()
 
 
-def test_scene_selection_is_preserved_across_terminal_clicks():
+def test_scene_selection_is_preserved_when_focus_leaves_the_prose():
     source = APP_JS.read_text(encoding="utf-8")
 
-    # The live Selection is cached so +sel can paste even after the user
-    # clicks into the terminal and moves the OS-level selection.
+    # The live Selection is cached so the selection survives the user
+    # clicking into the dock, which moves the OS-level selection.
     assert "let currentSelectionRange = null;" in source
     assert "function rememberSceneSelection(sel)" in source
     assert "currentSelectionRange = range.cloneRange();" in source
     assert "function restoreSceneSelection()" in source
     assert "sel.addRange(currentSelectionRange.cloneRange());" in source
-    assert "e.target.closest('#terminalPanel')" in source
-    # The terminal grabs the cached selection on mousedown, then keeps
-    # the visual via pinSelectionHighlight (no restoreSceneSelection
-    # call on mouseup, otherwise focus would jump back into the prose).
-    assert "terminalPanel.addEventListener('mousedown'" in source
+    # A click inside the dock must not dismiss the pill or forget the range.
+    assert "e.target.closest('#discussPanel')" in source
+    # The visual marker is kept via pinSelectionHighlight rather than by
+    # restoring the live Selection, which would jump focus back to the prose.
     assert "pinSelectionHighlight(currentSelectionRange)" in source
 
 

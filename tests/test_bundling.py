@@ -85,10 +85,10 @@ def test_dashboard_inlines_concatenated_bundle():
     assert "function buildAnalysisTab()" in html
     # From 30-router-modal.js
     assert "function openSceneModal(p)" in html
-    # From 70-terminal.js
-    assert "function spawnTerminal" in html or "function _initSessionXterm" in html
+    # From 70-dashboard.js
+    assert "function buildNotesTab()" in html
     # From 80-sidebar-init.js
-    assert "function previewRepoFile(path, options)" in html
+    assert "function renderSidebarTree()" in html
     assert "body.innerHTML = marked.parse(node.body)" not in html
     assert "renderSafeMarkdown(body, node.body, {basePath: node.path})" in html
 
@@ -225,16 +225,13 @@ def test_config_defaults_match_legacy_layout():
 
 
 def test_vendor_directory_ships_pinned_assets():
-    """The dashboard loads chart.js / marked / xterm from /vendor/ so
-    it works offline and can't break on a jsDelivr major bump. The
-    files must be present in the package.
+    """The dashboard loads chart.js / marked from /vendor/ so it works
+    offline and can't break on a jsDelivr major bump. The files must be
+    present in the package.
     """
     vendor = REPO_ROOT / "proseview" / "templates" / "vendor"
     assert vendor.is_dir()
-    expected = {
-        "chart.js", "chartjs-plugin-annotation.js", "marked.js",
-        "xterm.css", "xterm.js", "xterm-addon-fit.js",
-    }
+    expected = {"chart.js", "chartjs-plugin-annotation.js", "marked.js"}
     present = {p.name for p in vendor.iterdir() if p.is_file()}
     missing = expected - present
     assert not missing, f"vendor directory missing files: {missing}"
@@ -246,8 +243,7 @@ def test_template_loads_vendored_assets_from_local_paths():
     """
     html = build_dashboard(FIXTURE, Config.load(FIXTURE))
     # All vendored assets are loaded relative to /vendor/.
-    for filename in ("chart.js", "marked.js", "xterm.css", "xterm.js",
-                     "xterm-addon-fit.js", "chartjs-plugin-annotation.js"):
+    for filename in ("chart.js", "marked.js", "chartjs-plugin-annotation.js"):
         assert "/vendor/" + filename in html, f"vendor path missing: {filename}"
     assert "cdn.jsdelivr.net" not in html, \
         "jsDelivr URLs should be vendored locally"

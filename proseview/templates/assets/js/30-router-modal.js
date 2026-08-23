@@ -140,7 +140,6 @@
             // Reveal the scene in the sidebar: highlight it and expand the
             // chapter folders above it.
             if (typeof revealSidebarItem === 'function') revealSidebarItem({ scenePath: p });
-            if (typeof updateTerminalShortcuts === 'function') updateTerminalShortcuts();
             if (typeof discussFollowActiveDocument === 'function') discussFollowActiveDocument();
             // Deliberately does not open the dock. Forcing it open here made
             // `body.discuss-open` -- and its `margin-right` -- apply to every
@@ -401,7 +400,6 @@
                     focusedOpener = focusedOpener || opener;
                 }
             });
-            if (typeof closeAgentMenus === 'function') closeAgentMenus();
             if (restoreFocus && focusedOpener) focusedOpener.focus();
         }
 
@@ -797,7 +795,6 @@
             exitFocusMode();
             delete document.documentElement.dataset.view;
             if (options.route !== false) routeToHash('/tab/' + currentTab, true);
-            if (typeof updateTerminalShortcuts === 'function') updateTerminalShortcuts();
             if (typeof discussFollowActiveDocument === 'function') discussFollowActiveDocument();
             restoreActiveScrollPosition();
             return true;
@@ -828,9 +825,7 @@
 
         function _closeDockForFocus() {
             var panel = document.getElementById('discussPanel');
-            var term = document.getElementById('terminalPanel');
-            var open = (panel && !panel.hidden)
-                || (term && !term.hidden && typeof _termDock !== 'undefined' && _termDock === 'right');
+            var open = panel && !panel.hidden;
             _focusClosedTheDock = !!open;
             if (open && typeof closeScenePanel === 'function') closeScenePanel();
         }

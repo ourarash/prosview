@@ -7,13 +7,12 @@ Proseview is a local tool, not a sandbox. When you run it, it:
 - **serves HTTP on `localhost`** (default port 7842) for as long as it runs;
 - **reads and writes files in the repository you point it at** — saving a
   scene, adding a TODO, or accepting an AI edit rewrites your Markdown in place;
-- **spawns real terminals** with a PTY, running the commands you ask for
-  (`codex`, `claude`, a shell) as your user, from the repository root;
-- **starts a local `codex app-server`** on demand if you use Discuss, which
-  uses your existing Codex login, model, and history.
+- **starts a local agent process** on demand if you use Discuss — a
+  `codex app-server`, or Claude through `claude-agent-sdk` — running as your
+  user, from the repository root, on your existing login, model, and history.
 
 There is no sandbox, no container, and no privilege separation. Anything the
-in-browser terminal can do, you can do — because it is running as you.
+agent can do, you can do — because it is running as you.
 
 Proseview sends nothing to a remote server on its own. Network traffic happens
 only when *you* invoke an AI agent, and then it goes to that agent's provider
@@ -52,8 +51,8 @@ served repository, and symlinked paths are refused.
   caller is you.
 - **Point it at repositories you trust.** Scene text and repository files are
   rendered in your browser, and are handed to AI agents as context.
-- **Treat the terminal as a terminal.** Agents launched from Proseview run with
-  your permissions and can modify your files.
+- **Treat an approval as a real one.** Agents launched from Proseview run with
+  your permissions, and anything you approve can modify your files.
 - **On a shared machine, remember other local users can reach `localhost`.**
   The session token is what stops them; it lives in `.proseview/server.json`, so
   keep that file's `0600` permissions.

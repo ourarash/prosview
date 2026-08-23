@@ -8,10 +8,9 @@ edited, and annotated in place.
 
 Core analysis stays on your machine: no account, subscription, database, or
 telemetry. AI features are opt-in and run through agent CLIs you installed and
-logged into yourself — Codex or Claude in the side dock, and Codex, Claude, or
-Gemini in a terminal scoped to one file. When you use one, Proseview sends the
-active document by default, plus any selection or attachments, to that agent
-under its own login and data handling.
+logged into yourself — Codex or Claude in the side dock. When you use one,
+Proseview sends the active document by default, plus any selection or
+attachments, to that agent under its own login and data handling.
 
 Proseview reads plain `.md` files in whatever layout they already have, so it
 sits alongside Obsidian, Vim, or any other Markdown editor.
@@ -110,8 +109,7 @@ it happens is visible instead of inferred. Hover any scene for its card.
 
 Entirely optional, and it never runs on its own. Proseview has no model of its
 own and no API key of yours — it drives the agent CLIs already installed on
-your machine, under your login: Codex and Claude for the two Discuss tabs, and
-Codex, Claude, or Gemini for a terminal conversation about a single file.
+your machine, under your login: Codex and Claude, one Discuss tab each.
 
 Agent sessions are read-only. Anything beyond reading — a shell command, a file
 write — stops at an approval you have to grant, and raw model reasoning is
@@ -124,8 +122,7 @@ Everything else works without an agent installed. [Details →](docs/ai.md)
 
 ## 🚀 Quick start
 
-**Requirements:** Python 3.11+ on macOS, Linux, or Windows. The in-browser
-terminal needs a real PTY, so it is hidden on Windows; everything else works.
+**Requirements:** Python 3.11+ on macOS, Linux, or Windows.
 
 ```bash
 pipx install proseview
@@ -196,16 +193,15 @@ pytest
 
 That runs 642 unit tests plus an HTTP end-to-end tier that boots a real
 `proseview` subprocess and drives every endpoint — saves and the conflict
-guard, TODOs and notes, the AI proposal bridge through the actual CLI, live
-reload over SSE, and PTY terminals — asserting on bytes written to disk.
+guard, TODOs and notes, the AI proposal bridge through the actual CLI, and
+live reload over SSE — asserting on bytes written to disk.
 Discuss integration tests use a deterministic fake app-server and isolated
 home/state directories; they never contact Codex, the network, or your profile.
 ~15 seconds, no extra dependencies.
 
 A browser tier drives the real UI in Chromium (editor round-trip fidelity,
-the selection menu, highlight passes, deep links, agents, terminals, Discuss
-streaming/approvals/shared-dock behavior, and applying an AI proposal end to
-end). It's opt-in:
+the selection menu, highlight passes, deep links, Discuss
+streaming/approvals/dock behavior, and applying an AI proposal end to end). It's opt-in:
 
 ```bash
 pip install -e ".[e2e]"

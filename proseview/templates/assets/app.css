@@ -622,13 +622,10 @@
         }
         .scene-toolbar-menu-action > span:first-child { width: 18px; color: var(--text-muted); text-align: center; }
         .scene-toolbar-menu-action:hover, .scene-toolbar-menu-action.is-active { background: var(--surface-muted); color: var(--primary); }
-        .scene-toolbar-menu-end { width: auto !important; margin-left: auto; }
         .scene-toolbar-mode-field { margin: 8px 4px 2px; padding: 9px 6px 4px; border: 0; border-top: 1px solid var(--border); }
         .scene-toolbar-mode-field legend { padding: 0 4px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
         .scene-toolbar-mode-field label { display: inline-flex; align-items: center; gap: 4px; margin: 3px 8px 3px 0; font-size: 11px; cursor: pointer; }
         #sceneMoreMenu { width: 230px; }
-        #sceneMoreMenu .agent-menu-wrap { display: block; position: relative; }
-        #sceneMoreMenu #agentMenuScene { position: static; min-width: 0; margin: 2px 6px 5px 28px; box-shadow: none; border-color: var(--border); }
         #sceneToolbarReveal {
             position: absolute; top: 100%; left: 50%; width: 48px; height: 24px;
             transform: translateX(-50%); border: 0; border-radius: 0 0 8px 8px;
@@ -990,8 +987,8 @@
         .scene-todos-list { margin: 0; padding: 0 0 0 16px; }
         .scene-todo-item { font-size: 13px; color: var(--text-main); line-height: 1.6; padding: 2px 0; }
         /* Pinned scene-selection highlight (CSS Custom Highlight API).
-           Painted by app.js when the user clicks into the terminal so the
-           prose selection stays visible while focus is in xterm. */
+           Painted by app.js when focus leaves the prose so the selection
+           stays visible while the writer works in the dock. */
         ::highlight(proseview-pinned-selection) {
             background-color: rgba(88, 166, 255, 0.32);
             color: inherit;
@@ -1053,8 +1050,7 @@
         .selection-pill-separator { height: 1px; margin: 4px 6px; background: var(--border); }
         .selection-menu-back { color: var(--text-muted); font-weight: 700; }
         .selection-pill-action:hover { background: var(--surface-muted); }
-        .selection-pill-action:focus-visible,
-        .skills-dropdown-item:focus-visible {
+        .selection-pill-action:focus-visible {
             outline: 2px solid var(--primary);
             outline-offset: -2px;
             background: var(--surface-muted);
@@ -1260,114 +1256,7 @@
                    box-shadow: 0 0 0 0 rgba(99,102,241,0); }
         }
         .para-flash { animation: para-flash-kf 1.6s ease-out; border-radius: 4px; }
-        /* ── In-browser terminal panel ─────────────────────────────────────── */
-        html { --terminal-h: 52vh; --utility-dock-w: clamp(360px, 36vw, 620px); }
-        .terminal-panel {
-            position: fixed;
-            background: #0d1117;
-            z-index: 2100;
-            display: flex;
-            box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
-        }
-        .terminal-panel.dock-bottom {
-            bottom: 0; left: 0; right: 0;
-            height: var(--terminal-h); min-height: 200px;
-            flex-direction: column;
-            border-top: 2px solid #30363d;
-        }
-        .terminal-panel.dock-right {
-            top: 0; right: 0; bottom: 0;
-            width: var(--utility-dock-w); min-width: 320px;
-            flex-direction: row;
-            border-left: 2px solid #30363d;
-            box-shadow: -4px 0 24px rgba(0,0,0,0.4);
-        }
-        /* Body shifts left when terminal is right-docked */
-        body.terminal-right-open { margin-right: var(--utility-dock-w); }
-        .terminal-panel[hidden] { display: none; }
-        .terminal-header {
-            display: flex; align-items: center; gap: 10px;
-            padding: 6px 12px;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            flex-shrink: 0;
-        }
-        /* When right-docked the header is narrow — let it wrap to multiple rows */
-        .dock-right .terminal-header { flex-wrap: wrap; gap: 6px; }
-        .dock-right .terminal-header-spacer { display: none; }
-        .dock-right .terminal-shortcuts { flex-wrap: wrap; }
-        .terminal-header-icon { font-size: 13px; }
-        .terminal-header-title {
-            font-size: 12px; font-weight: 600;
-            color: #8b949e; font-family: monospace;
-            flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .terminal-header-spacer { flex: 1; }
-        .terminal-tabs {
-            display: flex; align-items: center; gap: 2px;
-            min-width: 0; overflow-x: auto; overflow-y: hidden;
-            scrollbar-width: thin;
-        }
-        .terminal-tab {
-            display: inline-flex; align-items: center; gap: 6px;
-            padding: 3px 4px 3px 10px; font-size: 11px;
-            color: #8b949e; font-family: monospace;
-            background: #0d1117; border: 1px solid #30363d;
-            border-radius: 4px; cursor: pointer;
-            white-space: nowrap; flex-shrink: 0;
-        }
-        .terminal-tab:hover { color: #c9d1d9; border-color: #58a6ff; }
-        .terminal-tab.active { background: #1f242c; color: #58a6ff; border-color: #58a6ff; }
-        .terminal-tab-label { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; user-select: none; }
-        .terminal-tab-label:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 2px; }
-        .terminal-tab-close {
-            background: none; border: none; color: inherit; opacity: 0.55;
-            cursor: pointer; font-size: 14px; line-height: 1;
-            padding: 0; border-radius: 3px; min-width: 24px; width: 24px; height: 24px;
-        }
-        .terminal-tab-close:hover { opacity: 1; background: #30363d; }
-        .term-reload-indicator {
-            font-size: 10px; color: #f0883e; font-family: monospace;
-            letter-spacing: 0.03em; flex-shrink: 0;
-            background: none; border: none; cursor: pointer; padding: 0;
-        }
-        .term-reload-indicator:hover { text-decoration: underline; }
-        .terminal-header-btn {
-            background: none; border: 1px solid #30363d; border-radius: 4px;
-            padding: 2px 8px; font-size: 11px; color: #8b949e; cursor: pointer;
-            white-space: nowrap; flex-shrink: 0;
-        }
-        .terminal-header-btn:hover { border-color: #58a6ff; color: #58a6ff; }
-        .terminal-close-btn { font-size: 15px; padding: 0 7px; }
-        .terminal-resize-handle {
-            position: absolute; z-index: 2205; background: transparent;
-            transition: none; user-select: none;
-        }
-        .terminal-resize-handle::after { content: ''; position: absolute; background: transparent; transition: background 0.15s, opacity 0.15s; }
-        .dock-bottom > .terminal-resize-handle { height: 24px; width: 100%; top: -12px; left: 0; cursor: ns-resize; }
-        .dock-bottom > .terminal-resize-handle::after { inset: 10px 0 auto 0; height: 4px; }
-        .dock-right > .terminal-resize-handle { width: 24px; height: 100%; left: -12px; top: 0; cursor: ew-resize; }
-        .dock-right > .terminal-resize-handle::after { inset: 0 auto 0 10px; width: 4px; }
-        .terminal-resize-handle:hover::after,
-        .terminal-resize-handle.is-dragging::after,
-        .terminal-resize-handle:focus-visible::after { background: #58a6ff; opacity: 0.5; }
-        .terminal-resize-handle:focus-visible { outline: none; }
-        .terminal-inner {
-            flex: 1; min-width: 0; min-height: 0;
-            display: flex; flex-direction: column;
-        }
-        .terminal-mounts {
-            flex: 1; min-height: 0; position: relative;
-        }
-        .terminal-tab-mount {
-            position: absolute; inset: 0;
-            overflow: hidden; padding: 4px 4px 0 8px;
-            display: flex; flex-direction: column;
-        }
-        .terminal-tab-mount[hidden] { display: none; }
-        .terminal-tab-mount .xterm { flex: 1; min-height: 0; }
-        .terminal-tab-mount .xterm-viewport { overflow-y: scroll; }
-        .terminal-tab-mount .xterm-screen { height: 100% !important; }
+        html { --utility-dock-w: clamp(360px, 36vw, 620px); }
         /* ── Discuss / shared right utility dock ─────────────────────────── */
         body.discuss-open { margin-right: var(--utility-dock-w); }
         .discuss-panel {
@@ -1378,11 +1267,11 @@
         }
         .discuss-panel[hidden] { display: none; }
         .discuss-resize-handle { width: 24px; cursor: ew-resize; flex: 0 0 auto; background: transparent; position: relative; }
-        /* Unlike the sidebar and terminal handles, this one is an in-flow flex
-           child, so its left edge already *is* the dock's edge -- there is no
-           negative offset to compensate for. Their `left: 10px` would push the
-           bar 10px inside the dock, away from the seam it is supposed to mark.
-           -2px straddles the 1px border instead, matching the terminal handle. */
+        /* Unlike the sidebar handle, this one is an in-flow flex child, so its
+           left edge already *is* the dock's edge -- there is no negative offset
+           to compensate for. Its `left: 10px` would push the bar 10px inside
+           the dock, away from the seam it is supposed to mark. -2px straddles
+           the 1px border instead. */
         .discuss-resize-handle::after { content: ''; position: absolute; inset: 0 auto 0 -2px; width: 4px; background: transparent; transition: background 0.15s, opacity 0.15s; }
         .discuss-resize-handle:hover::after, .discuss-resize-handle.is-dragging::after, .discuss-resize-handle:focus-visible::after { background: var(--primary); opacity: 0.5; }
         .discuss-resize-handle:focus-visible { outline: none; }
@@ -1404,9 +1293,6 @@
         .utility-tab-attention::after { background: #d29922; animation: none; }
         @media (prefers-reduced-motion: reduce) { .utility-tab-busy::after { animation: none; } }
         .utility-tab-unavailable { opacity: 0.55; }
-        .terminal-utility-tabs { flex-shrink: 0; }
-        .terminal-header .utility-tab { color: #8b949e; }
-        .terminal-header .utility-tab.active { background: #1f242c; color: #58a6ff; }
         .discuss-empty-state {
             padding: 24px; text-align: center; color: var(--text-muted);
             display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;
@@ -1678,27 +1564,24 @@
         .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
         :where(.discuss-panel, .discuss-context-picker, .discuss-context-menu) button:focus-visible, #discussInput:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: 2px; }
         @media (max-width: 1120px) {
-            body.discuss-open, body.terminal-right-open {
+            body.discuss-open {
                 margin-left: 0 !important; margin-right: 0;
                 width: calc(100vw - min(var(--utility-dock-w), 50vw)) !important;
                 max-width: none;
             }
-            body.discuss-open .repo-sidebar,
-            body.terminal-right-open .repo-sidebar { transform: translateX(calc(-1 * var(--sidebar-w))); pointer-events: none; }
-            .discuss-panel, .terminal-panel.dock-right { width: min(var(--utility-dock-w), 50vw); }
+            body.discuss-open .repo-sidebar { transform: translateX(calc(-1 * var(--sidebar-w))); pointer-events: none; }
+            .discuss-panel { width: min(var(--utility-dock-w), 50vw); }
         }
         @media (min-width: 1121px) {
-            html:not([data-sidebar="closed"]) body.discuss-open,
-            html:not([data-sidebar="closed"]) body.terminal-right-open {
+            html:not([data-sidebar="closed"]) body.discuss-open {
                 width: calc(100vw - var(--sidebar-w) - var(--utility-dock-w));
             }
-            html[data-sidebar="closed"] body.discuss-open,
-            html[data-sidebar="closed"] body.terminal-right-open {
+            html[data-sidebar="closed"] body.discuss-open {
                 width: calc(100vw - var(--utility-dock-w));
             }
         }
         @media (max-width: 640px) {
-            .discuss-panel, .terminal-panel.dock-right { width: 100vw; }
+            .discuss-panel { width: 100vw; }
             .discuss-resize-handle { display: none; }
             .discuss-header { padding-top: max(10px, env(safe-area-inset-top)); }
             #discussHint { display: none; }
@@ -1712,47 +1595,6 @@
         @media (prefers-reduced-motion: reduce) {
             .discuss-log { scroll-behavior: auto; }
         }
-        /* Skills dropdowns */
-        .skills-dropdown {
-            position: absolute; bottom: calc(100% + 6px);
-            background: var(--surface-card); border: 1px solid var(--border);
-            border-radius: 6px; min-width: 210px; padding: 4px;
-            z-index: 3000; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-        }
-        .skills-dropdown-item {
-            display: block; width: 100%; background: none; border: none;
-            border-radius: 4px; padding: 6px 10px; text-align: left;
-            font-size: 12px; color: var(--text-main); cursor: pointer;
-        }
-        .skills-dropdown-item:hover { background: var(--surface-muted); color: var(--primary); }
-        /* Terminal shortcut buttons */
-        .terminal-shortcuts { display: flex; align-items: center; gap: 4px; }
-        .terminal-shortcuts-sep { width: 1px; height: 14px; background: #30363d; margin: 0 4px; }
-        .terminal-header-btn:disabled { opacity: 0.35; cursor: default; }
-        .terminal-font-control {
-            display: flex; align-items: center; gap: 5px;
-            padding: 0 6px; flex-shrink: 0;
-        }
-        .terminal-font-control-label {
-            font-size: 10px; color: #8b949e; user-select: none;
-            font-family: Georgia, serif; line-height: 1;
-        }
-        #terminalFontSize { width: 64px; accent-color: #58a6ff; cursor: pointer; }
-        .term-presets-wrap { position: relative; }
-        .term-presets-menu {
-            position: absolute; bottom: calc(100% + 6px); right: 0;
-            background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-            min-width: 200px; padding: 4px; z-index: 2200;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-        }
-        .term-preset-item {
-            display: block; width: 100%;
-            background: none; border: none; border-radius: 4px;
-            padding: 6px 10px; text-align: left;
-            font-size: 12px; color: #c9d1d9; cursor: pointer;
-        }
-        .term-preset-item:hover:not(:disabled) { background: #21262d; color: #58a6ff; }
-        .term-preset-item:disabled { opacity: 0.4; cursor: default; }
         /* Asset hot-reload banner (shown when JS/HTML templates change while
            the page is open and a full reload is needed to apply them). */
         /* Compact pill that matches the scene-edit-bar style. Lives in the
@@ -1795,17 +1637,6 @@
             padding: 2px 6px; border-radius: 999px;
         }
         .asset-reload-banner-dismiss:hover { color: var(--text-main); background: var(--surface-muted); }
-        .term-preset-group-label {
-            font-size: 9px; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.08em; color: #6e7681; padding: 6px 10px 2px;
-        }
-        /* Codex button in selection pill */
-        .selection-codex-form { padding: 8px 0 4px; }
-        .selection-codex-autoapprove {
-            display: flex; align-items: center; gap: 5px;
-            font-size: 11px; color: var(--text-muted); cursor: pointer;
-            padding: 4px 0 2px; user-select: none;
-        }
         /* ── Modal focus mode ──────────────────────────────────────────── */
         /* Scene chrome that has not moved into the dock. The stat grid, the
            pass list and the task rows live in the panel now, and focus mode
@@ -1819,27 +1650,22 @@
         }
         html[data-css-zoom="true"] body { margin-left: 0 !important; }
         html[data-css-zoom="true"] .repo-sidebar { transform: translateX(calc(-1 * var(--sidebar-w))); pointer-events: none; }
-        html[data-css-zoom="true"] body.discuss-open,
-        html[data-css-zoom="true"] body.terminal-right-open {
+        html[data-css-zoom="true"] body.discuss-open {
             width: calc(var(--css-zoom-body-width) - var(--css-zoom-dock-width)) !important;
             margin-right: var(--css-zoom-dock-width);
         }
-        html[data-css-zoom="true"] .discuss-panel,
-        html[data-css-zoom="true"] .terminal-panel.dock-right { width: var(--css-zoom-dock-width); min-width: 0; }
+        html[data-css-zoom="true"] .discuss-panel { width: var(--css-zoom-dock-width); min-width: 0; }
         /* At an effective narrow width, side-by-side utilities technically fit
            but crush literary prose to one-word lines. Use a deliberate
            single-surface overlay until the writer closes the utility. */
-        html[data-utility-overlay="true"] body.discuss-open,
-        html[data-utility-overlay="true"] body.terminal-right-open {
+        html[data-utility-overlay="true"] body.discuss-open {
             width: var(--css-zoom-body-width) !important;
             margin-right: 0;
         }
-        html[data-utility-overlay="true"] .discuss-panel,
-        html[data-utility-overlay="true"] .terminal-panel.dock-right {
+        html[data-utility-overlay="true"] .discuss-panel {
             width: var(--css-zoom-body-width);
         }
-        html[data-utility-overlay="true"] .discuss-resize-handle,
-        html[data-utility-overlay="true"] .terminal-panel.dock-right .terminal-resize-handle {
+        html[data-utility-overlay="true"] .discuss-resize-handle {
             display: none;
         }
         html[data-css-zoom="true"] .scene-toolbar-popover { width: min(260px, calc(100vw - 20px)); }
@@ -2460,13 +2286,6 @@
         }
         @media (prefers-reduced-motion: reduce) {
             .scene-pass-switch, .scene-pass-switch::after { transition: none; }
-        }
-
-        /* The dock tabs get a row of their own inside the terminal so the
-           session chips cannot crowd them out of a narrow right dock. */
-        .terminal-dock-tabs {
-            flex-shrink: 0; padding: 6px 12px; background: #161b22;
-            border-bottom: 1px solid #30363d;
         }
 .hl-custom-tooltip {
     position: absolute;

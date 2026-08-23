@@ -1,8 +1,8 @@
 """End-to-end tests that drive Proseview in a real browser.
 
 These cover the surface that only exists once the page's JavaScript runs: the
-ProseMirror editor, the selection menu, highlight passes, deep links, the
-terminal, and the AI proposal bridge arriving over SSE.
+ProseMirror editor, the selection menu, highlight passes, deep links, Discuss,
+and the AI proposal bridge arriving over SSE.
 
 Opt-in -- excluded from the default ``pytest`` run by the ``e2e_browser`` marker.
 
@@ -34,7 +34,6 @@ pytest.importorskip("playwright.sync_api", reason="pip install -e '.[e2e]'")
 from playwright.sync_api import Browser, Page, Route, sync_playwright  # noqa: E402
 
 from .conftest import (
-    AGENT_MARKER,
     ANNOTATED_SCENE_REL,
     BARE_SCENE_REL,
     HTML_LEAD_SCENE_REL,
@@ -46,11 +45,6 @@ from .conftest import (
 )
 
 pytestmark = pytest.mark.e2e_browser
-
-#: The dashboard dock can only offer the Terminal, which needs a PTY.
-POSIX_ONLY_BROWSER = pytest.mark.skipif(
-    os.name != "posix", reason="the dashboard dock is terminal-only, and PTYs are POSIX-only"
-)
 
 # ── browser plumbing ────────────────────────────────────────────────────────
 
@@ -1257,7 +1251,7 @@ def test_discuss_context_picker_attaches_only_the_files_the_writer_selects(
     assert question in prompt
 
 
-def test_discuss_approval_file_navigation_and_shared_terminal_dock(page: Page, server: ProseviewServer):
+def test_discuss_approval_and_file_navigation(page: Page, server: ProseviewServer):
     page.goto(f"{server.base_url}#/file/plans/book-plan.md", wait_until="load")
     page.wait_for_function("() => !!window._PM")
     page.wait_for_selector("#file-preview-panel", state="visible")
@@ -1291,52 +1285,6 @@ def test_discuss_approval_file_navigation_and_shared_terminal_dock(page: Page, s
     page.locator(".discuss-approval button", has_text="Decline").wait_for(state="visible")
     page.locator(".discuss-approval button", has_text="Decline").click()
     page.wait_for_function("() => document.querySelector('#discussLog').innerText.includes('Approval resolved: decline')")
-
-    page.click("#discussPanel .utility-tab:text-is('Terminal')")
-    page.wait_for_selector("#terminalPanel", state="visible")
-    page.wait_for_function("() => document.getElementById('terminalPanel').classList.contains('dock-right')")
-    page.wait_for_selector(".terminal-tab-mount .xterm", timeout=20_000)
-    page.click(".terminal-tab-mount .xterm-screen")
-    _wait_until(lambda: any(ch in _terminal_text(page) for ch in ("$", "%", "#")), timeout=25)
-    run_in_terminal(page, "echo discuss-terminal-alive", "discuss-terminal-alive")
-    page.click("#terminalPanel button:text-is('Codex')")
-    page.wait_for_selector("#discussPanel", state="visible")
-    assert "Approval resolved" in page.locator("#discussLog").inner_text()
-    page.click("#discussPanel .utility-tab:text-is('Terminal')")
-    assert "discuss-terminal-alive" in _terminal_text(page)
-
-
-def test_the_terminal_never_buries_the_way_back_to_the_other_tabs(
-    page: Page, server: ProseviewServer
-):
-    """Session chips used to share a row with the dock tabs.
-
-    Open two shells in a right-docked terminal and "Scene" and "Analysis" were
-    pushed off the end of the header, with no way back to them. The dock tabs
-    have a row of their own now, and they survive any number of sessions.
-    """
-    open_scene(page, server)
-    open_discuss(page)
-    page.click("#discussPanel .utility-tab:text-is('Terminal')")
-    page.wait_for_selector("#terminalPanel", state="visible")
-    page.wait_for_selector(".terminal-tab-mount .xterm", timeout=20_000)
-    page.evaluate("() => { openShellTerminal(); openShellTerminal(); }")
-    page.wait_for_function(
-        "() => document.querySelectorAll('#terminalTabs .terminal-tab').length >= 3"
-    )
-
-    tabs = page.locator("#terminalPanel .terminal-dock-tabs .utility-tab")
-    assert tabs.count() == 6
-    for name in ("Scene", "Analysis", "History", "Codex", "Claude", "Terminal"):
-        tab = page.locator(f"#terminalPanel .terminal-dock-tabs button:text-is('{name}')")
-        assert tab.is_visible(), f"{name} is unreachable from a terminal with two shells"
-        box = tab.bounding_box()
-        assert box and box["x"] >= 0 and box["width"] > 0
-
-    # And the way back actually works.
-    page.click("#terminalPanel .terminal-dock-tabs button:text-is('Analysis')")
-    page.wait_for_selector("#sceneAnalysisPane:not([hidden])")
-    assert page.locator("#terminalPanel").is_hidden()
 
 
 def test_discuss_responsive_dark_zoom_and_keyboard_flow(page: Page, server: ProseviewServer):
@@ -2462,8 +2410,6 @@ def test_scene_toolbar_is_compact_and_exposes_grouped_actions(page: Page, server
     assert more.is_visible()
     assert page.locator("#modalRefreshBtn").is_visible()
     assert page.locator("#modalEditorBtn").is_visible()
-    assert page.locator("#agentMenuSceneBtn").is_visible()
-    assert more.get_by_role("button", name="Open shell").is_visible()
     page.keyboard.press("Escape")
     assert more.is_hidden()
     assert page.evaluate("document.activeElement.id") == "sceneMoreBtn"
@@ -2731,20 +2677,6 @@ def test_one_dock_shows_one_thing_at_a_time(
 
     prose = page.locator("#sceneProseHost").bounding_box()
     assert prose and prose["y"] < 400
-
-
-def test_unavailable_terminal_hides_every_terminal_backed_entry_point(
-    page: Page,
-    server: ProseviewServer,
-):
-    open_scene(page, server)
-    open_discuss(page)
-    page.wait_for_selector("#discussPanel", state="visible")
-    page.evaluate("_hideTerminalEntryPointsWhenUnavailable(false)")
-
-    assert page.locator('[onclick*="openShellTerminal"]:visible').count() == 0
-    assert page.locator(".agent-menu-wrap:visible").count() == 0
-    assert page.locator('#discussPanel [onclick="showRightTerminal()"]:visible').count() == 0
 
 
 def test_compact_scene_leads_with_prose_and_context_reflows_beside_the_dock(
@@ -3731,18 +3663,6 @@ def test_workspace_resizers_are_keyboard_operable_and_preserve_writing_space(
     page.mouse.up()
     assert page.locator("#sceneModal .modal-content").bounding_box()["width"] >= 420
 
-    page.evaluate("closeDiscuss(); _termDock = 'bottom'; document.getElementById('terminalPanel').hidden = false; _applyTerminalDock()")
-    terminal = page.get_by_role("separator", name="Resize Terminal")
-    before_height = page.locator("#terminalPanel").bounding_box()["height"]
-    terminal.focus()
-    page.keyboard.press("ArrowUp")
-    assert page.locator("#terminalPanel").bounding_box()["height"] > before_height
-    page.evaluate("toggleTerminalDock()")
-    assert terminal.get_attribute("aria-orientation") == "vertical"
-    terminal.focus()
-    page.keyboard.press("End")
-    assert page.locator("#sceneModal .modal-content").bounding_box()["width"] >= 420
-
 
 def test_resizer_values_match_rendered_bounds_at_compact_and_zoom(
     page: Page,
@@ -3771,22 +3691,6 @@ def test_resizer_values_match_rendered_bounds_at_compact_and_zoom(
     zoom_width = page.locator("#discussPanel").bounding_box()["width"]
     assert zoom_width >= 1020
     assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-
-    page.evaluate("closeDiscuss(); _termDock = 'bottom'; document.getElementById('terminalPanel').hidden = false; _applyTerminalDock()")
-    terminal = page.get_by_role("separator", name="Resize Terminal")
-    terminal.focus()
-    page.keyboard.press("End")
-    terminal_height = page.locator("#terminalPanel").bounding_box()["height"]
-    assert abs(float(terminal.get_attribute("aria-valuenow")) - terminal_height) <= 1
-    handle = terminal.bounding_box()
-    assert handle and handle["y"] >= 240
-
-    page.evaluate("toggleTerminalDock()")
-    page.wait_for_function("() => document.getElementById('terminalPanel').classList.contains('dock-right')")
-    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-    assert terminal.is_hidden()
-    panel = page.locator("#terminalPanel").bounding_box()
-    assert panel and panel["x"] <= 1 and panel["width"] >= 1020
 
 
 def test_compact_utility_docks_remove_retracted_sidebar_from_keyboard_order(
@@ -5425,155 +5329,6 @@ def test_managed_skills_come_from_app_server(page: Page, server: ProseviewServer
     assert "Tighten Prose" in listed
 
 
-# ── agents and terminal ─────────────────────────────────────────────────────
-
-
-def _terminal_text(page: Page) -> str:
-    """Read the visible xterm buffer.
-
-    xterm renders into ``.xterm-rows``, so ``inner_text`` on the panel works --
-    but only for rows currently on screen, which is all these tests need.
-    """
-    return page.locator("#terminalPanel").inner_text()
-
-
-def open_shell_terminal(page: Page) -> None:
-    """Open a shell tab, focus xterm, and wait until the shell can take input.
-
-    Two separate races here. The click is needed because keystrokes otherwise
-    go to the document and never reach the PTY. The prompt wait is needed
-    because the ``$ Shell`` button spawns a *login interactive* shell: until it
-    has finished starting up and drawn a prompt, anything typed is swallowed
-    and the test hangs waiting for output that will never come.
-    """
-    page.click("#sceneMoreBtn")
-    page.get_by_role("button", name="Open shell").click()
-    page.wait_for_selector("#terminalPanel", state="visible")
-    page.wait_for_selector(".terminal-tab-mount .xterm", timeout=20_000)
-    page.click(".terminal-tab-mount .xterm-screen")
-    _wait_until(
-        lambda: any(ch in _terminal_text(page) for ch in ("$", "%", "#")),
-        timeout=25,
-        message="shell never drew a prompt",
-    )
-
-
-def run_in_terminal(page: Page, command: str, marker: str, attempts: int = 4) -> None:
-    """Type *command* into the focused terminal until *marker* comes back.
-
-    xterm wires its ``onData`` handler to ``/terminal-input`` a beat after the
-    element appears, so the first keystrokes are occasionally dropped on the
-    floor with no error. Retrying is what a user does when nothing echoes, and
-    it makes the test deterministic; re-running an ``echo`` is harmless.
-    """
-    for _ in range(attempts):
-        page.keyboard.type(command + "\n")
-        deadline = time.monotonic() + 6.0
-        while time.monotonic() < deadline:
-            if marker in _terminal_text(page):
-                return
-            time.sleep(0.15)
-    raise AssertionError(f"{marker!r} never appeared after {attempts} attempts")
-
-
-def test_shell_terminal_opens_and_runs_a_command(page: Page, server: ProseviewServer):
-    open_scene(page, server)
-    open_shell_terminal(page)
-
-    run_in_terminal(page, "echo proseview-browser-marker", "proseview-browser-marker")
-
-    terminal_input = page.locator(".terminal-tab-mount:not([hidden]) .xterm-helper-textarea")
-    assert terminal_input.get_attribute("aria-describedby") == "terminalKeyboardHelp"
-    assert terminal_input.get_attribute("aria-keyshortcuts") == "Shift+Tab"
-    terminal_input.focus()
-    page.keyboard.press("Shift+Tab")
-    active_tab = page.locator('#terminalTabs [role="tab"][aria-selected="true"]')
-    assert active_tab.evaluate("el => el === document.activeElement")
-
-
-def test_terminal_session_tabs_are_named_and_keyboard_operable(
-    page: Page,
-    server: ProseviewServer,
-):
-    open_scene(page, server)
-    page.evaluate(
-        """() => {
-            const panel = document.getElementById('terminalPanel');
-            panel.hidden = false;
-            panel.style.display = 'flex';
-            const mounts = document.getElementById('terminalMounts');
-            const makeSession = (id, label) => {
-                const mountEl = document.createElement('div');
-                mountEl.className = 'terminal-tab-mount';
-                mounts.appendChild(mountEl);
-                return {id, label, type: 'shell', termId: null, xterm: null, fit: null,
-                        es: null, send: null, contextFile: null, contextSel: null, mountEl};
-            };
-            _termSessions = [makeSession('keyboard-one', 'Shell 1'),
-                             makeSession('keyboard-two', 'Shell 2')];
-            _termActiveId = 'keyboard-one';
-            _renderTabs();
-        }"""
-    )
-
-    tabs = page.locator("#terminalTabs").get_by_role("tab")
-    assert tabs.count() == 2
-    assert tabs.nth(0).get_attribute("aria-selected") == "true"
-    tabs.nth(0).focus()
-    page.keyboard.press("ArrowRight")
-    assert tabs.nth(1).get_attribute("aria-selected") == "true"
-    assert tabs.nth(1).evaluate("el => el === document.activeElement")
-
-    tabs.nth(0).locator("xpath=following-sibling::button").focus()
-    page.keyboard.press("Enter")
-    assert page.locator("#terminalTabs").get_by_role("tab").count() == 1
-    assert page.locator("#terminalTabs").get_by_role("tab").evaluate(
-        "el => el === document.activeElement"
-    )
-    close = page.locator("#terminalTabs .terminal-tab-close")
-    close_box = close.bounding_box()
-    assert close_box and close_box["width"] >= 24 and close_box["height"] >= 24
-    page.evaluate(
-        "_termReturnFocus = Array.from(document.querySelectorAll('#sceneMoreMenu button'))"
-        ".find(button => button.textContent.includes('Shell'))"
-    )
-    close.focus()
-    page.keyboard.press("Enter")
-    assert page.locator("#terminalPanel").is_hidden()
-    assert page.evaluate("document.activeElement.id") == "sceneMoreBtn"
-
-
-@pytest.mark.parametrize(("label", "agent"), [("Codex", "codex"), ("Claude", "claude"), ("Gemini", "gemini")])
-def test_scene_agent_menu_launches_the_agent(page: Page, server: ProseviewServer, label: str, agent: str):
-    """The agent menu spawns the agent's own binary in a terminal tab.
-
-    A stub on PATH stands in for the real tool and announces itself, so this
-    proves the click reaches an actual process.
-    """
-    open_scene(page, server)
-    page.click("#sceneMoreBtn")
-    page.click("#agentMenuSceneBtn")
-    page.wait_for_selector("#agentMenuScene", state="visible")
-    page.click(f"#agentMenuScene button:has-text('{label}')")
-
-    page.wait_for_selector("#terminalPanel", state="visible")
-    _wait_until(lambda: f"{AGENT_MARKER} {agent}" in _terminal_text(page), timeout=25,
-                message=f"{agent} stub never announced itself")
-
-    sessions = server.get_json("/terminal-list")["sessions"]
-    assert any(s["type"] == agent for s in sessions)
-
-
-def _terminal_flat(page: Page) -> str:
-    """Terminal text with runs of whitespace collapsed.
-
-    xterm hard-wraps at the column width and each visual row is its own DOM
-    node, so a long prompt is split across lines. Collapsing whitespace lets a
-    test match the prompt as the user wrote it.
-    """
-    return " ".join(_terminal_text(page).split())
-
-
 def test_ask_about_selection_is_normal_chat_and_keeps_context_for_followups(
     page: Page, server: ProseviewServer
 ):
@@ -5930,25 +5685,6 @@ def test_quick_critique_queues_while_an_active_turn_is_stopping(
     page.wait_for_selector("#discussStop", state="hidden")
 
 
-def test_terminal_survives_a_page_reload(page: Page, server: ProseviewServer):
-    """A reload must reattach live sessions rather than orphan running agents."""
-    open_scene(page, server)
-    open_shell_terminal(page)
-    run_in_terminal(page, "echo before-reload", "before-reload")
-
-    before = {s["id"] for s in server.get_json("/terminal-list")["sessions"]}
-    assert before
-
-    page.reload(wait_until="load")
-    page.wait_for_selector("#terminalPanel", state="visible")
-    page.wait_for_selector(".terminal-tab-mount .xterm")
-
-    after = {s["id"] for s in server.get_json("/terminal-list")["sessions"]}
-    assert before <= after, "reload killed a live terminal session"
-    _wait_until(lambda: "before-reload" in _terminal_text(page), timeout=20,
-                message="scrollback was not replayed after reload")
-
-
 # ── AI proposal bridge ──────────────────────────────────────────────────────
 
 
@@ -6227,9 +5963,8 @@ def test_timeline_hides_the_untagged_lane_when_everything_is_tagged(page: Page, 
 
 
 def test_leaving_a_scene_closes_the_dock(page: Page, shared_server: ProseviewServer):
-    """Three of the four tabs describe the document that just closed, so there
-    is nothing left worth showing -- and closing costs nothing, because a
-    terminal session is hidden rather than killed."""
+    """Every tab describes the document that just closed, so there is nothing
+    left worth showing."""
     open_scene(page, shared_server)
     open_scene_details(page)
     assert page.locator("#sceneDetailsPane").is_visible()
@@ -6238,59 +5973,8 @@ def test_leaving_a_scene_closes_the_dock(page: Page, shared_server: ProseviewSer
     page.wait_for_selector("#sceneModal", state="hidden")
 
     page.wait_for_selector("#discussPanel", state="hidden")
-    assert page.locator("#terminalPanel").is_hidden()
     for tab in ("#utilityTabScene", "#utilityTabAnalysis", "#utilityTabCodex"):
         assert page.locator(tab).is_hidden(), tab
-
-
-@POSIX_ONLY_BROWSER
-def test_leaving_a_scene_never_spawns_a_terminal(page: Page, shared_server: ProseviewServer):
-    """The regression this replaces: falling back to the Terminal tab called
-    ``showRightTerminal``, which spawns a shell when none is running. Clicking
-    "Dashboard" created a PTY process nobody asked for."""
-    open_scene(page, shared_server)
-    open_scene_details(page)
-    assert page.evaluate("() => _termSessions.length") == 0
-
-    page.click(".scene-back-btn")
-    page.wait_for_selector("#discussPanel", state="hidden")
-
-    assert page.evaluate("() => _termSessions.length") == 0, "navigation spawned a shell"
-
-
-@POSIX_ONLY_BROWSER
-def test_closing_the_dock_hides_a_running_shell_rather_than_killing_it(
-    page: Page, shared_server: ProseviewServer
-):
-    """This is why closing is safe. The session survives and comes back."""
-    open_scene(page, shared_server)
-    page.evaluate("() => showRightTerminal()")
-    page.wait_for_function("() => _termSessions.length === 1")
-
-    page.click(".scene-back-btn")
-    page.wait_for_selector("#terminalPanel", state="hidden")
-    assert page.evaluate("() => _termSessions.length") == 1, "closing the dock killed the shell"
-
-    # The dashboard button brings the same session back, without spawning another.
-    page.click("#dashboardPanelBtn")
-    page.wait_for_selector("#terminalPanel:not([hidden])")
-    assert page.evaluate("() => _termSessions.length") == 1
-
-
-@POSIX_ONLY_BROWSER
-def test_the_dashboard_panel_button_opens_the_terminal_on_purpose(
-    page: Page, shared_server: ProseviewServer
-):
-    """An explicit click is consent, unlike navigation: opening -- and spawning
-    -- a shell here is exactly what was asked for."""
-    open_dashboard(page, shared_server)
-    button = page.locator("#dashboardPanelBtn")
-    assert button.count() == 1 and button.is_visible()
-
-    button.click()
-    page.wait_for_selector("#terminalPanel:not([hidden])")
-    button.click()
-    page.wait_for_selector("#terminalPanel", state="hidden")
 
 
 def test_leaving_a_scene_does_not_forget_the_preferred_dock_tab(

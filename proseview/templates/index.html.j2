@@ -56,9 +56,6 @@
     <script src="/vendor/chart.js"></script>
     <script src="/vendor/chartjs-plugin-annotation.js"></script>
     <script src="/vendor/marked.js"></script>
-    <link rel="stylesheet" href="/vendor/xterm.css">
-    <script src="/vendor/xterm.js"></script>
-    <script src="/vendor/xterm-addon-fit.js"></script>
     <style id="proseview-app-css">
 {{ app_css | safe }}
     </style>
@@ -164,7 +161,6 @@
                     <li class="theme-menu-item" role="option" tabindex="-1" data-theme-value="graphite-dark" onmouseenter="previewTheme('graphite-dark')" onclick="selectTheme('graphite-dark')">Graphite Dark</li>
                 </ul>
             </div>
-            <button type="button" id="dashboardPanelBtn" class="theme-toggle discuss-open-btn" onclick="toggleScenePanel(this)" aria-label="Show or hide the utility panel" title="Show or hide the terminal panel"><span aria-hidden="true">&#9707;</span><span class="theme-toggle-label">Panel</span></button>
         </div>
     </div>
 
@@ -384,7 +380,7 @@
                     <option value="hopscotch">Hopscotch</option><option value="graphite-light">Graphite Light</option><option value="graphite-dark">Graphite Dark</option>
                 </select>
                 <a id="filePreviewEditorBtn" class="editor-btn" href="#" target="_blank" style="flex-shrink:0;" title=""></a>
-                <button type="button" class="editor-btn" id="filePreviewRefreshBtn" onclick="refreshFilePreview()" title="Refresh file preview" style="flex-shrink:0; cursor:pointer;">&#x21BB;</button><button type="button" class="editor-btn discuss-open-btn" onclick="toggleScenePanel(this)" style="flex-shrink:0; cursor:pointer;" title="Show or hide the scene panel">&#9707; Panel</button><div class="agent-menu-wrap" style="position:relative;display:inline-block;flex-shrink:0;"><button type="button" class="editor-btn" id="agentMenuFileBtn" onclick="toggleAgentMenu('file')" style="cursor:pointer;">Agents &#x25BE;</button><div id="agentMenuFile" class="skills-dropdown" style="display:none;right:0;left:auto;top:calc(100% + 6px);bottom:auto;"><button type="button" class="skills-dropdown-item" onclick="openFileInCodex();closeAgentMenus()">&#x26A1; Codex</button><button type="button" class="skills-dropdown-item" onclick="openFileInClaude();closeAgentMenus()">&#x2728; Claude</button><button type="button" class="skills-dropdown-item" onclick="openFileInGemini();closeAgentMenus()">&#x2756; Gemini</button></div></div><button type="button" class="editor-btn" onclick="openShellTerminal()" style="flex-shrink:0; cursor:pointer;">$ Shell</button>
+                <button type="button" class="editor-btn" id="filePreviewRefreshBtn" onclick="refreshFilePreview()" title="Refresh file preview" style="flex-shrink:0; cursor:pointer;">&#x21BB;</button><button type="button" class="editor-btn discuss-open-btn" onclick="toggleScenePanel(this)" style="flex-shrink:0; cursor:pointer;" title="Show or hide the scene panel">&#9707; Panel</button>
             </div>
         </div>
         <div id="filePreviewBody" class="modal-body repo-preview-body"></div>
@@ -416,8 +412,6 @@
                     <a id="modalEditorBtn" class="scene-toolbar-menu-action" target="_blank" title="Open in {{ editor_label }}"><span aria-hidden="true">&#8599;</span> Open in {{ editor_label }}</a>
                     <button id="modalFocusBtn" type="button" class="scene-toolbar-menu-action" onclick="closeSceneToolbarMenus();toggleFocusMode()" aria-pressed="false" aria-keyshortcuts="F"><span aria-hidden="true">&#9681;</span> Focus layout</button>
                     <button id="modalFullscreenBtn" type="button" class="scene-toolbar-menu-action" onclick="closeSceneToolbarMenus();toggleFullscreen()" aria-pressed="false" aria-keyshortcuts="Shift+F"><span aria-hidden="true">&#8597;</span> Full screen</button>
-                    <div class="agent-menu-wrap"><button type="button" class="scene-toolbar-menu-action" id="agentMenuSceneBtn" onclick="toggleAgentMenu('scene')" aria-haspopup="menu" aria-controls="agentMenuScene" aria-expanded="false"><span aria-hidden="true">&#10022;</span> Agents <span class="scene-toolbar-menu-end" aria-hidden="true">&#8250;</span></button><div id="agentMenuScene" class="skills-dropdown" role="menu" style="display:none;"><button type="button" role="menuitem" class="skills-dropdown-item" onclick="openSceneInCodex();closeAgentMenus();closeSceneToolbarMenus()">&#x26A1; Codex</button><button type="button" role="menuitem" class="skills-dropdown-item" onclick="openSceneInClaude();closeAgentMenus();closeSceneToolbarMenus()">&#x2728; Claude</button><button type="button" role="menuitem" class="skills-dropdown-item" onclick="openSceneInGemini();closeAgentMenus();closeSceneToolbarMenus()">&#x2756; Gemini</button></div></div>
-                    <button type="button" class="scene-toolbar-menu-action" onclick="closeSceneToolbarMenus();openShellTerminal()" aria-label="Open shell"><span aria-hidden="true">$</span> Shell</button>
                 </div></div>
                 <button type="button" class="modal-close scene-toolbar-button" onclick="closeSceneModal()" aria-label="Close scene and return to dashboard" title="Close scene and return to dashboard">&times;</button>
             </div>
@@ -433,51 +427,12 @@
 
 
     <div id="pmInsertAffordance" class="pm-insert-affordance" hidden title="Insert annotation">+</div>
-    <div id="terminalPanel" class="terminal-panel dock-bottom" hidden>
-        <div id="terminalResizeHandle" class="terminal-resize-handle" role="separator" tabindex="0" aria-label="Resize Terminal" aria-orientation="horizontal" aria-valuemin="150" aria-valuemax="920" aria-valuenow="520"></div>
-        <div class="terminal-inner">
-            <p id="terminalKeyboardHelp" class="sr-only">Press Shift+Tab to leave terminal input and return to the active terminal tab.</p>
-            <!-- The dock tabs get their own row. Sharing the header with the
-                 session chips meant that opening two shells could push "Scene"
-                 and "Analysis" out of a right-docked terminal entirely, and
-                 there was no way back to them. -->
-            <div class="terminal-dock-tabs utility-tabs terminal-utility-tabs" role="tablist" aria-label="Right utility dock"><button type="button" id="termUtilityTabScene" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('scene')">Scene</button><button type="button" id="termUtilityTabAnalysis" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('analysis')">Analysis</button><button type="button" id="termUtilityTabHistory" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('history')">History</button><button type="button" id="termUtilityTabCodex" class="utility-tab" role="tab" aria-selected="false" onclick="showDiscussAgentTab('codex', this)">Codex</button><button type="button" id="termUtilityTabClaude" class="utility-tab" role="tab" aria-selected="false" onclick="showDiscussAgentTab('claude', this)">Claude</button><button type="button" id="termUtilityTabTerminal" class="utility-tab active" role="tab" aria-selected="true" onclick="showRightTerminal()">Terminal</button></div>
-            <div class="terminal-header">
-                <div id="terminalTabs" class="terminal-tabs" role="tablist" aria-label="Terminal sessions"></div>
-                <button id="termReloadIndicator" class="term-reload-indicator" hidden title="Files changed — click to refresh content, or close terminal to reload" onclick="refreshContent()">&#x25CF; changes pending</button>
-                <div class="terminal-header-spacer"></div>
-                <div class="terminal-shortcuts">
-                    <button class="terminal-header-btn" id="termSelBtn" onmousedown="terminalInsertSel(event)" title="Paste selected text" disabled>+ sel</button>
-                    <button class="terminal-header-btn" id="termFileBtn" onclick="terminalInsertFile()" title="Paste @filename" disabled>+ @file</button>
-                    <button class="terminal-header-btn" id="termPolishBtn" onclick="terminalPolishFile()" title="Paste a polish-this-file prompt" disabled>+ polish</button>
-                    <div class="term-presets-wrap">
-                        <button class="terminal-header-btn" id="termPresetsBtn" onclick="terminalTogglePresets()" title="Preset prompts" disabled>Presets &#x25BE;</button>
-                        <div id="termPresetsMenu" class="term-presets-menu" style="display:none"></div>
-                    </div>
-                    <div class="term-presets-wrap">
-                        <button class="terminal-header-btn" id="termSkillsBtn" onclick="terminalToggleSkills()" title="Snippet skills" disabled>&#x2728; Skills &#x25BE;</button>
-                        <div id="termSkillsMenu" class="term-presets-menu" style="display:none"></div>
-                    </div>
-                    <span class="terminal-shortcuts-sep"></span>
-                </div>
-                <div class="terminal-font-control" title="Terminal font size">
-                    <span class="terminal-font-control-label">Aa</span>
-                    <input id="terminalFontSize" type="range" min="10" max="22" value="13" step="1" oninput="updateTerminalFontSize(this.value)">
-                </div>
-                <button class="terminal-header-btn" id="terminalDockBtn" onclick="toggleTerminalDock()" title="Dock to right / bottom">&#x21E5;</button>
-                <button class="terminal-header-btn" id="terminalClearBtn" onclick="clearTerminal()" title="Clear active tab">Clear</button>
-                <button class="terminal-header-btn terminal-close-btn" onclick="closeTerminal()" title="Close all tabs">&times;</button>
-            </div>
-            <div id="terminalMounts" class="terminal-mounts"></div>
-        </div>
-    </div>
-
     <aside id="discussPanel" class="discuss-panel" aria-labelledby="discussTitle" hidden>
         <div id="discussResizeHandle" class="discuss-resize-handle" role="separator" tabindex="0" aria-label="Resize Discuss" aria-orientation="vertical" aria-valuemin="340" aria-valuemax="620" aria-valuenow="504"></div>
         <div class="discuss-shell">
             <header class="discuss-header">
                 <div class="utility-tabs" role="tablist" aria-label="Right utility dock">
-                    <button type="button" id="utilityTabScene" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('scene')" title="Frontmatter, story fields, links and tasks for this scene">Scene</button><button type="button" id="utilityTabAnalysis" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('analysis')" title="Measures and highlight passes for this scene">Analysis</button><button type="button" id="utilityTabHistory" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('history')" title="Undo/redo and file version history">History</button><button type="button" id="utilityTabCodex" class="utility-tab active" role="tab" aria-selected="true" onclick="showDiscussAgentTab('codex', this)" title="Discuss this project with Codex">Codex</button><button type="button" id="utilityTabClaude" class="utility-tab" role="tab" aria-selected="false" onclick="showDiscussAgentTab('claude', this)" title="Discuss this project with Claude">Claude</button><button type="button" id="utilityTabTerminal" class="utility-tab" role="tab" aria-selected="false" onclick="showRightTerminal()">Terminal</button>
+                    <button type="button" id="utilityTabScene" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('scene')" title="Frontmatter, story fields, links and tasks for this scene">Scene</button><button type="button" id="utilityTabAnalysis" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('analysis')" title="Measures and highlight passes for this scene">Analysis</button><button type="button" id="utilityTabHistory" class="utility-tab" role="tab" aria-selected="false" onclick="showScenePanelTab('history')" title="Undo/redo and file version history">History</button><button type="button" id="utilityTabCodex" class="utility-tab active" role="tab" aria-selected="true" onclick="showDiscussAgentTab('codex', this)" title="Discuss this project with Codex">Codex</button><button type="button" id="utilityTabClaude" class="utility-tab" role="tab" aria-selected="false" onclick="showDiscussAgentTab('claude', this)" title="Discuss this project with Claude">Claude</button>
                 </div>
                 <div class="discuss-heading"><h2 id="discussTitle">Codex</h2><span id="discussConnection" class="discuss-connection" aria-live="polite">Restoring conversation</span></div>
                 <button type="button" class="discuss-close" id="discussClose" onclick="closeDiscuss()" aria-label="Close the agent panel">&times;</button>
@@ -579,7 +534,6 @@
         const imagesConfig = {{ images_config_json | safe }};
         const discussSelectionPresets = {{ discuss_presets_json | safe }};
         const discussDefaultAgent = {{ discuss_default_agent_json | safe }};
-        const terminalAvailable = {{ terminal_available_json | safe }};
         const pageSessionToken = {{ session_token_json | safe }};
         const storyModel = {{ story_json | safe }};
         const lexicalBands = {{ lexical_bands_json | safe }};

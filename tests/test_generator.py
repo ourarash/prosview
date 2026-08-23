@@ -48,7 +48,6 @@ def test_dashboard_contains_structural_markers():
         'id="utilityTabAnalysis"',
         'id="utilityTabCodex"',
         'id="utilityTabClaude"',
-        'id="utilityTabTerminal"',
         'id="presenceChart"',
         'id="locationChart"',
         'id="coOccurChart"',

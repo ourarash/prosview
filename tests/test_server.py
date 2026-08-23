@@ -319,25 +319,3 @@ def test_save_scene_atomic_no_truncation_on_bad_content(tmp_path):
     assert len(result) > 10
     assert "---" in result
     assert "New prose." in result
-
-
-# ── Terminal shell selection ────────────────────────────────────────────────
-
-
-def test_default_shell_prefers_an_existing_interpreter(monkeypatch):
-    """``$SHELL`` is unset in systemd units, containers, and CI runners.
-
-    The fallback used to be a hardcoded ``/bin/zsh``, so on any image without
-    zsh -- most Linux ones -- every terminal and agent launch failed outright.
-    """
-    from proseview.server import _default_shell
-
-    monkeypatch.setattr("os.path.exists", lambda p: p == "/bin/bash")
-    assert _default_shell() == "/bin/bash"
-
-    monkeypatch.setattr("os.path.exists", lambda p: p == "/bin/zsh")
-    assert _default_shell() == "/bin/zsh"
-
-    # Nothing found: POSIX guarantees /bin/sh, so that is the safe last resort.
-    monkeypatch.setattr("os.path.exists", lambda p: False)
-    assert _default_shell() == "/bin/sh"

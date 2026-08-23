@@ -435,7 +435,7 @@
         function _returnFocusTarget(trigger) {
             const outside = trigger
                 && trigger.getClientRects && trigger.getClientRects().length
-                && !trigger.closest('#discussPanel, #terminalPanel');
+                && !trigger.closest('#discussPanel');
             if (outside) return trigger;
             const modal = document.querySelector('#sceneModal .discuss-open-btn');
             const preview = document.querySelector('#file-preview-panel .discuss-open-btn');
@@ -493,11 +493,6 @@
             _discussConversationId = null;
             document.body.classList.add('discuss-open');
             try { sessionStorage.setItem('proseview-panel-open', 'true'); } catch(e) {}
-            if (typeof _termDock !== 'undefined' && _termDock === 'right') {
-                var terminal = document.getElementById('terminalPanel');
-                if (terminal && !terminal.hidden) terminal.hidden = true;
-                document.body.classList.remove('terminal-right-open');
-            }
             renderDiscussContext();
             renderDiscussTaskMode();
             setDiscussConnection('Restoring conversation', '');
@@ -632,24 +627,14 @@
             _syncDiscussAmbientSignals();
         }
 
-        function hideDiscussForTerminal() {
-            var panel = document.getElementById('discussPanel');
-            if (panel && !panel.hidden) {
-                saveDiscussDraft();
-                _saveDiscussAgentLocal();
-                panel.hidden = true;
-                document.body.classList.remove('discuss-open');
-            }
-        }
-
         // ── Scene panel tabs ────────────────────────────────────────────
         //
-        // Four tabs in one dock, ordered by how much they can surprise you.
-        // Scene and Analysis are deterministic -- frontmatter, counts, and the
-        // highlight passes, all derived from the file on disk. Codex is the
-        // only surface that calls a model. Terminal is a shell. Keeping that
-        // boundary legible is the point of the split.
-        const SCENE_PANEL_TABS = ['scene', 'analysis', 'history', 'codex', 'claude', 'terminal'];
+        // Five tabs in one dock, ordered by how much they can surprise you.
+        // Scene, Analysis and History are deterministic -- frontmatter, counts,
+        // the highlight passes and the version log, all derived from the file
+        // on disk. Codex and Claude are the surfaces that call a model. Keeping
+        // that boundary legible is the point of the split.
+        const SCENE_PANEL_TABS = ['scene', 'analysis', 'history', 'codex', 'claude'];
         const SCENE_PANEL_TAB_KEY = 'proseview-scene-panel-tab';
 
         function _readScenePanelTab() {
@@ -665,16 +650,12 @@
             return SCENE_PANEL_TABS.indexOf(saved) >= 0 ? saved : 'scene';
         }
 
-        // Both copies of the tab row -- the panel's and the terminal's -- are
-        // driven from here, so whichever one you are looking at agrees with
-        // what the dock is actually showing.
         const UTILITY_TAB_IDS = {
-            scene: ['utilityTabScene', 'termUtilityTabScene'],
-            analysis: ['utilityTabAnalysis', 'termUtilityTabAnalysis'],
-            history: ['utilityTabHistory', 'termUtilityTabHistory'],
-            codex: ['utilityTabCodex', 'termUtilityTabCodex'],
-            claude: ['utilityTabClaude', 'termUtilityTabClaude'],
-            terminal: ['utilityTabTerminal', 'termUtilityTabTerminal']
+            scene: ['utilityTabScene'],
+            analysis: ['utilityTabAnalysis'],
+            history: ['utilityTabHistory'],
+            codex: ['utilityTabCodex'],
+            claude: ['utilityTabClaude']
         };
 
         function _setUtilityTab(name) {
@@ -687,9 +668,6 @@
                     el.setAttribute('aria-selected', on ? 'true' : 'false');
                 });
             });
-            // Terminal is a destination, not a scene view: reopening the panel
-            // on it would show a shell where the reader expected their scene.
-            if (name === 'terminal') return;
             try { localStorage.setItem(SCENE_PANEL_TAB_KEY, name); } catch (e) {}
         }
 
@@ -737,7 +715,6 @@
             if (!spec || !panel) return;
             const pane = document.getElementById(spec.id);
             if (!pane) return;
-            hideRightTerminalForPanel();
             panel.hidden = false;
             document.body.classList.add('discuss-open');
             try { sessionStorage.setItem('proseview-panel-open', 'true'); } catch(e) {}
@@ -771,29 +748,12 @@
 
         function showDiscussTab(trigger) { showDiscussAgentTab(_discussAgent, trigger); }
 
-        function hideRightTerminalForPanel() {
-            const term = document.getElementById('terminalPanel');
-            if (term && typeof _termDock !== 'undefined' && _termDock === 'right') term.hidden = true;
-        }
-
         // ── Dock scope ──────────────────────────────────────────────────────
-        // Leaving a scene closes the dock. Three of the four tabs describe the
-        // document that just closed -- Scene and Analysis directly, and Codex
-        // refuses to start without one, see the guard at the top of
-        // openDiscuss. Only Terminal stands alone, and switching to it would
-        // drop the reader into a shell they never asked for, spawning a fresh
-        // one when none was running: a process created as a side effect of
-        // clicking "Dashboard".
-        //
-        // Closing costs nothing. closeScenePanel only hides the terminal, so a
-        // live session keeps running and comes back intact when the dock is
-        // reopened; _termSessions is never touched.
-        const SCENE_SCOPED_TABS = ['scene', 'analysis', 'history', 'codex', 'claude'];
-
-        function _terminalIsAvailable() {
-            return typeof terminalAvailable === 'undefined' || !!terminalAvailable;
-        }
-
+        // Leaving a scene closes the dock. Every tab describes the document
+        // that just closed -- Scene, Analysis and History directly, and the
+        // agent tabs refuse to start without one, see the guard at the top of
+        // openDiscuss. With nothing left to show, the dock has no business
+        // staying open over the dashboard.
         function _sceneScopedViewIsOpen() {
             const view = document.documentElement.dataset.view;
             return view === 'scene' || view === 'file';
@@ -801,16 +761,12 @@
 
         function syncScenePanelScope() {
             const scoped = _sceneScopedViewIsOpen();
-            SCENE_SCOPED_TABS.forEach(function(tab) {
+            SCENE_PANEL_TABS.forEach(function(tab) {
                 UTILITY_TAB_IDS[tab].forEach(function(id) {
                     const el = document.getElementById(id);
                     if (el) el.hidden = !scoped;
                 });
             });
-            // Terminal is all the dashboard dock can offer, so without one the
-            // button would open an empty panel.
-            const dashBtn = document.getElementById('dashboardPanelBtn');
-            if (dashBtn) dashBtn.hidden = !_terminalIsAvailable();
 
             if (!scoped) {
                 closeScenePanel();
@@ -837,19 +793,11 @@
 
         function toggleScenePanel(trigger) {
             const panel = document.getElementById('discussPanel');
-            const term = document.getElementById('terminalPanel');
-            const termInDock = term && !term.hidden
-                && typeof _termDock !== 'undefined' && _termDock === 'right';
-            if ((panel && !panel.hidden) || termInDock) { closeScenePanel(); return; }
+            if (panel && !panel.hidden) { closeScenePanel(); return; }
+            // Every tab is scene-scoped, so there is nothing to open over the
+            // dashboard.
+            if (!_sceneScopedViewIsOpen()) return;
             const tab = _readScenePanelTab();
-            // On the dashboard the Terminal is the only tab with anything to
-            // show. Opening it here is fine where falling into it on navigation
-            // was not: this is a button the reader pressed. `_setUtilityTab`
-            // never stores 'terminal', so their preferred tab survives.
-            if (!_sceneScopedViewIsOpen() && SCENE_SCOPED_TABS.indexOf(tab) >= 0) {
-                if (_terminalIsAvailable()) showRightTerminal();
-                return;
-            }
             // One call, not two: openDiscuss opens a conversation on the
             // server, and doing it twice queued a second thread/read behind the
             // first for every reader whose last tab was an agent.
@@ -857,17 +805,11 @@
             else showScenePanelTab(tab);
         }
 
-        // The Panel button owns the whole dock, so closing has to cover the
-        // right-docked terminal too -- otherwise pressing it while a shell was
-        // showing did nothing visible.
         function closeScenePanel() {
-            const term = document.getElementById('terminalPanel');
-            var termInDock = term && typeof _termDock !== 'undefined' && _termDock === 'right';
             const panel = document.getElementById('discussPanel');
-            var wasOpen = (panel && !panel.hidden) || (term && !term.hidden && termInDock);
+            var wasOpen = panel && !panel.hidden;
 
-            if (termInDock) term.hidden = true;
-            if (panel && !panel.hidden) closeDiscuss();
+            if (wasOpen) closeDiscuss();
             
             if (wasOpen) {
                 try { sessionStorage.setItem('proseview-panel-open', 'false'); } catch(e) {}
@@ -1012,20 +954,6 @@
                 row.classList.toggle('is-on', on);
                 row.setAttribute('aria-pressed', on ? 'true' : 'false');
             });
-        }
-
-        function showRightTerminal() {
-            hideDiscussForTerminal();
-            if (typeof _termDock !== 'undefined') _termDock = 'right';
-            try { localStorage.setItem('proseview-terminal-dock', 'right'); } catch(e) {}
-            _setUtilityTab('terminal');
-            var panel = document.getElementById('terminalPanel');
-            if (typeof _termSessions !== 'undefined' && _termSessions.length) {
-                panel.hidden = false;
-                _applyTerminalDock();
-            } else {
-                openShellTerminal();
-            }
         }
 
         function discussFollowActiveDocument() {

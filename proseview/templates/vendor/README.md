@@ -9,8 +9,6 @@ by the proseview server at `/vendor/<file>`.
 | chart.js                      | npm:chart.js                              | 4.5.0          |
 | chartjs-plugin-annotation.js  | npm:chartjs-plugin-annotation             | 3.0.1          |
 | marked.js                     | npm:marked                                | 14.1.4         |
-| xterm.css / xterm.js          | npm:@xterm/xterm                          | 5.5.0          |
-| xterm-addon-fit.js            | npm:@xterm/addon-fit                      | 0.10.0         |
 
 The ProseMirror modules are pulled from `esm.sh` at fixed versions in
 `templates/index.html.j2`. Vendoring the full ESM graph would require a

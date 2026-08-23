@@ -120,11 +120,11 @@
 
         // ── Pinned scene selection highlight ─────────────────────────────
         // The browser only ever shows one Selection at a time, and clicking
-        // into the xterm canvas / its hidden textarea moves that selection
-        // off the prose. To let the user select text, click into the
-        // terminal, type, and then press +sel without losing the visual
-        // marker, we paint the saved range with the CSS Custom Highlight
-        // API. It survives focus changes because it isn't tied to Selection.
+        // into the Discuss composer moves that selection off the prose. To let
+        // the user select text, click into the composer, and type without
+        // losing the visual marker, we paint the saved range with the CSS
+        // Custom Highlight API. It survives focus changes because it isn't
+        // tied to Selection.
         var PINNED_HL_NAME = 'proseview-pinned-selection';
         var _pinnedHighlight = null;
 
@@ -911,54 +911,12 @@
             document.addEventListener('mousedown', function(e) {
                 const pill = document.getElementById('selectionPill');
                 if (!pill || pill.style.display === 'none') return;
-                if (e.target.closest('#terminalPanel')) return;
                 if (e.target.closest('#discussPanel')) return;
                 if (!pill.contains(e.target) && !e.target.closest('#modalBody')) {
                     hideSelectionPill();
                     clearSceneSelectionMemory();
                 }
             });
-
-            const terminalPanel = document.getElementById('terminalPanel');
-            if (terminalPanel) {
-                let terminalMouseDown = null;
-                terminalPanel.addEventListener('mousedown', function(e) {
-                    // Snapshot the current prose selection AND paint it as a
-                    // pinned highlight before xterm steals focus. The pinned
-                    // highlight is what the user actually sees while they
-                    // type into the terminal; the snapshot is what +sel
-                    // pastes if the live Selection has been cleared by then.
-                    if (window.getSelection) {
-                        rememberSceneSelection(window.getSelection());
-                    }
-                    if (currentSelectionRange) {
-                        pinSelectionHighlight(currentSelectionRange);
-                        selectionMemoryPreserved = true;
-                    }
-                    terminalMouseDown = {x: e.clientX, y: e.clientY};
-                }, true);
-                terminalPanel.addEventListener('mouseup', function(e) {
-                    if (!terminalMouseDown) return;
-                    terminalMouseDown = null;
-                    // Intentionally do NOT call restoreSceneSelection here.
-                    // Restoring the live Selection moves focus/caret back
-                    // into the prose. In edit mode the prose is a
-                    // contenteditable ProseMirror, so the next keystroke
-                    // would type into the editor (and replace any selected
-                    // range) instead of going to the terminal. The pinned
-                    // CSS highlight already shows the user where their
-                    // selection was, and +sel reads from the cached
-                    // currentSelectionText snapshot, so we don't need the
-                    // live Selection at all.
-                }, true);
-                // Prevent terminal header buttons from stealing focus (and clearing prose selection)
-                var termHeader = terminalPanel.querySelector('.terminal-header');
-                if (termHeader) {
-                    termHeader.addEventListener('mousedown', function(e) {
-                        if (e.target.closest('button')) e.preventDefault();
-                    });
-                }
-            }
 
             document.addEventListener('mousemove', function(e) {
                 if (!pillDragging) return;
@@ -1028,16 +986,9 @@
             }
         }, true);
 
-        var _pendingReload = false;
         var _refreshTimer = null;
         var _refreshInFlight = false;
         var _refreshQueued = false;
-        const TERMINAL_REFRESH_DEBOUNCE_MS = 150;
-
-        function setPendingIndicator(visible) {
-            var indicator = document.getElementById('termReloadIndicator');
-            if (indicator) { indicator.hidden = !visible; }
-        }
 
         function pathListContains(pathsList, path) {
             if (!pathsList || !pathsList.length || !path) return true;
@@ -1058,14 +1009,8 @@
         }
 
         function scheduleContentRefresh(delay) {
-            if (_termSessions.length === 0) {
-                location.reload();
-                return;
-            }
-            _pendingReload = true;
             if (_refreshInFlight) {
                 _refreshQueued = true;
-                setPendingIndicator(true);
                 return;
             }
             if (_refreshTimer) clearTimeout(_refreshTimer);
@@ -1090,8 +1035,6 @@
             if (!pathListContains(changedPaths, scenePath)) return;
             if (_refreshInFlight) {
                 _refreshQueued = true;
-                _pendingReload = true;
-                setPendingIndicator(true);
                 return;
             }
             if (_refreshTimer) {
@@ -1124,17 +1067,12 @@
                 if (data.highlightsByPath && data.highlightsByPath[scenePath]) highlightsByPath[scenePath] = data.highlightsByPath[scenePath];
                 refreshSucceeded = true;
                 updateModal(true);
-            }).catch(function() {
-                _pendingReload = true;
-                setPendingIndicator(true);
-            }).finally(function() {
+            }).catch(function() {}).finally(function() {
                 _refreshInFlight = false;
                 if (!refreshSucceeded) return;
                 if (_refreshQueued) {
                     _refreshQueued = false;
                     scheduleContentRefresh(0);
-                } else {
-                    setPendingIndicator(false);
                 }
             });
         }
@@ -1150,11 +1088,9 @@
         }
 
         function showAssetReloadBanner() {
-            // Terminal sessions now reattach across reload (server keeps the
-            // PTYs alive, client replays the scrollback). The only thing a
-            // reload destroys is an in-progress unsaved edit. So we only
-            // surface the banner when the user is in edit mode -- otherwise
-            // just refresh silently.
+            // The only thing a reload destroys is an in-progress unsaved
+            // edit. So we only surface the banner when the user is in edit
+            // mode -- otherwise just refresh silently.
             var editing = (typeof _pmEditMode !== 'undefined') && _pmEditMode;
             if (!editing) {
                 location.reload();

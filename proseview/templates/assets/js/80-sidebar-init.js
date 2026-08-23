@@ -283,21 +283,6 @@
             }
         });
 
-        // Windows has no pty, so the shell cannot exist there. Hide its entry
-        // points rather than offering a button that fails when clicked.
-        function _hideTerminalEntryPointsWhenUnavailable(available) {
-            const enabled = available === undefined
-                ? (typeof terminalAvailable === 'undefined' || terminalAvailable)
-                : !!available;
-            if (enabled) return;
-            document.querySelectorAll('[onclick*="openShellTerminal"]').forEach(function(el) {
-                el.hidden = true;
-            });
-            document.querySelectorAll('.agent-menu-wrap').forEach(function(el) { el.hidden = true; });
-            document.querySelectorAll('[onclick*="showRightTerminal"]').forEach(function(el) { el.hidden = true; });
-        }
-        document.addEventListener('DOMContentLoaded', _hideTerminalEntryPointsWhenUnavailable);
-
         function sortTable(n) { sortTableEl(document.getElementById("sceneTable"), n); }
 
         function sortTableEl(t, n) {
