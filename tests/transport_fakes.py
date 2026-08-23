@@ -45,6 +45,7 @@ class CodexFakeClient:
         self.continuity_line = 3
         self.continuity_quote = "Mira learned winter in Boston."
         self.capabilities = {"reasoning_summary": True}
+        self.config = {"model": "gpt-5.6-sol", "model_reasoning_effort": "xhigh"}
         self.threads: dict[str, dict] = {}
         self._lock = threading.Lock()
 
@@ -157,6 +158,44 @@ class CodexFakeClient:
 
             threading.Timer(self.finish_delay, finish).start()
             return {"turn": {"id": turn_id, "status": "inProgress"}}
+        if method == "model/list":
+            # Codex publishes the catalog and the resolved configuration
+            # separately, and its effort ladder differs per model.
+            return {"data": [
+                {
+                    "id": "gpt-5.6-sol",
+                    "displayName": "GPT-5.6-Sol",
+                    "description": "Latest frontier agentic coding model.",
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": effort, "description": f"{effort} reasoning"}
+                        for effort in ("low", "medium", "high", "xhigh", "max", "ultra")
+                    ],
+                    "defaultReasoningEffort": "medium",
+                    "isDefault": True,
+                },
+                {
+                    "id": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6-Luna",
+                    "description": "Fast and affordable agentic coding model.",
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": effort, "description": f"{effort} reasoning"}
+                        for effort in ("low", "medium", "high")
+                    ],
+                    "defaultReasoningEffort": "medium",
+                    "isDefault": False,
+                },
+                {
+                    "id": "gpt-5.4",
+                    "displayName": "GPT-5.4",
+                    "description": "Strong model for everyday coding.",
+                    "supportedReasoningEfforts": [{"reasoningEffort": "high", "description": "high reasoning"}],
+                    "defaultReasoningEffort": "high",
+                    "isDefault": False,
+                    "upgrade": "gpt-5.6-terra",
+                },
+            ]}
+        if method == "config/read":
+            return {"config": dict(self.config)}
         if method == "turn/interrupt":
             self.interrupts.append(dict(params))
             if self.complete_turn_before_interrupt_error:
@@ -219,6 +258,7 @@ class ClaudeFakeClient:
                 "fileChange": ["accept", "acceptForSession", "decline", "cancel"],
             },
         }
+        self.model_default = {"model": "opus", "effort": "high", "source": "Claude Code settings"}
         self.threads: dict[str, dict] = {}
         self._lock = threading.Lock()
 
@@ -258,6 +298,36 @@ class ClaudeFakeClient:
     def request(self, method, params, *, timeout=None):
         if method == "skills/list":
             return {"skills": []}
+        if method == "model/list":
+            # The Claude transport already knows its own resolved default, so
+            # it answers the catalog and the default in one response.
+            return {
+                "data": [
+                    {
+                        "id": "opus",
+                        "displayName": "Opus 5",
+                        "description": "Most capable.",
+                        "supportedReasoningEfforts": [
+                            {"reasoningEffort": effort, "description": f"{effort} reasoning"}
+                            for effort in ("low", "medium", "high", "xhigh", "max")
+                        ],
+                        "defaultReasoningEffort": "high",
+                        "isDefault": True,
+                    },
+                    {
+                        "id": "haiku",
+                        "displayName": "Haiku 4.5",
+                        "description": "Fastest and cheapest.",
+                        "supportedReasoningEfforts": [
+                            {"reasoningEffort": effort, "description": f"{effort} reasoning"}
+                            for effort in ("low", "medium", "high", "xhigh", "max")
+                        ],
+                        "defaultReasoningEffort": "low",
+                        "isDefault": False,
+                    },
+                ],
+                "default": dict(self.model_default),
+            }
         if method == "thread/read":
             thread = self.threads.get(params["threadId"])
             if thread is None:

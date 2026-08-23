@@ -525,6 +525,16 @@
                         <button id="discussHistory" type="button" class="discuss-secondary" onclick="openDiscussHistoryDialog()">History</button>
                         <button id="discussHistoryClear" type="button" class="discuss-secondary" onclick="clearDiscussHistory()" title="Clear assistance results from this conversation" hidden>Clear results</button>
                     </div>
+                    <div class="discuss-model-wrap">
+                        <button id="discussModelChip" type="button" class="discuss-model-chip" onclick="toggleDiscussModelPicker()" aria-haspopup="dialog" aria-expanded="false" data-inherited="true" hidden><span id="discussModelName" class="discuss-model-name">Model</span><span class="discuss-model-sep" aria-hidden="true">·</span><span id="discussModelEffort" class="discuss-model-effort"></span><span class="discuss-model-caret" aria-hidden="true">&#9662;</span></button>
+                        <div id="discussModelPicker" class="discuss-model-picker" role="dialog" aria-label="Choose a model" hidden>
+                            <div class="discuss-model-picker-head"><strong>Model</strong><span>Applies from your next message</span></div>
+                            <div id="discussModelList" class="discuss-model-list" role="radiogroup" aria-label="Model"></div>
+                            <div class="discuss-model-effort-head"><strong>Reasoning effort</strong><span id="discussModelEffortDesc"></span></div>
+                            <div id="discussModelEfforts" class="discuss-model-efforts" role="group" aria-label="Reasoning effort"></div>
+                            <p id="discussModelFoot" class="discuss-model-foot"></p>
+                        </div>
+                    </div>
                 </div>
                 <div id="discussNewConversationHint" class="discuss-control-hint" role="status" hidden></div>
                 <label class="sr-only" id="discussInputLabel" for="discussInput">Ask about your project</label>

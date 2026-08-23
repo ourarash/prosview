@@ -2122,6 +2122,12 @@ class _Handler(BaseHTTPRequestHandler):
                     )
                     self._send_json({"ok": True, "conversation_id": snapshot["conversation_id"], "snapshot": snapshot})
                     return
+                if path == "/api/discuss/models":
+                    self._send_json({
+                        "ok": True,
+                        "catalog": self.discuss_manager.list_models(body.get("agent") or "codex"),
+                    })
+                    return
                 if path == "/api/discuss/skills":
                     skills = self.discuss_manager.list_skills(
                         force_reload=bool(body.get("force_reload")),
@@ -2147,6 +2153,7 @@ class _Handler(BaseHTTPRequestHandler):
                 history_action_match = re.fullmatch(
                     r"/api/discuss/conversations/([^/]+)/history/([^/]+)/(open|rename|remove|export)", path
                 )
+                model_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/model", path)
                 new_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/new", path)
                 stop_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/turns/([^/]+)/stop", path)
                 approval_match = re.fullmatch(r"/api/discuss/conversations/([^/]+)/approvals/([^/]+)", path)
@@ -2279,6 +2286,13 @@ class _Handler(BaseHTTPRequestHandler):
                     else:
                         result = self.discuss_manager.export_conversation(conversation_id, thread_id)
                         self._send_json({"ok": True, "export": result})
+                    return
+                if model_match:
+                    result = self.discuss_manager.set_model(model_match.group(1), {
+                        "model": body.get("model"),
+                        "effort": body.get("effort"),
+                    })
+                    self._send_json({"ok": True, **result})
                     return
                 if new_match:
                     snapshot = self.discuss_manager.new_conversation(new_match.group(1))

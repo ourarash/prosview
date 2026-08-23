@@ -1472,6 +1472,62 @@ def test_discuss_queues_stops_and_continues(page: Page, server: ProseviewServer)
     page.wait_for_selector("#discussStop", state="hidden")
 
 
+def test_discuss_model_chip_pins_a_model_for_this_conversation(page: Page, server: ProseviewServer):
+    """The picker in the composer, doing the thing the chip claims it does."""
+    open_scene(page, server)
+    open_discuss(page)
+    page.wait_for_function("() => document.querySelector('#discussConnection').innerText.startsWith('Live')")
+    page.wait_for_selector("#discussModelChip:not([hidden])")
+
+    # Nothing pinned yet: the chip reports what Codex itself resolves to.
+    chip = page.locator("#discussModelChip")
+    assert chip.get_attribute("data-inherited") == "true"
+    assert page.locator("#discussModelName").inner_text() == "GPT-5.6-Sol"
+    assert page.locator("#discussModelEffort").inner_text() == "xhigh"
+
+    chip.click()
+    page.wait_for_selector("#discussModelPicker:not([hidden])")
+    options = page.locator("#discussModelList .discuss-model-option")
+    assert options.count() == 3, "the inherit row plus every advertised model"
+    assert "Follow Codex settings" in options.nth(0).inner_text()
+
+    # Luna's ladder stops at high, so xhigh must not survive the switch.
+    options.nth(2).click()
+    page.wait_for_function(
+        "() => document.querySelector('#discussModelName').innerText === 'GPT-5.6-Luna'"
+    )
+    assert page.locator("#discussModelEffort").inner_text() == "high"
+    assert "not available on GPT-5.6-Luna" in page.locator("#discussModelFoot").inner_text()
+    assert chip.get_attribute("data-inherited") == "false"
+    assert page.locator("#discussModelEfforts button[disabled]").count() >= 1
+
+    page.locator("#discussModelEfforts button", has_text="low").first.click()
+    page.wait_for_function("() => document.querySelector('#discussModelEffort').innerText === 'low'")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#discussModelPicker", state="hidden")
+
+    page.fill("#discussInput", "Ask on the pinned model")
+    page.press("#discussInput", "Enter")
+    wait_for_discuss_answer(page, "Fake answer")
+    # The chip is not decoration: the choice went out with the turn.
+    records = [
+        json.loads(line)
+        for line in (server.home / "fake-codex-received.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert records[-1]["params"]["model"] == "gpt-5.6-luna"
+    assert records[-1]["params"]["effort"] == "low"
+
+    # A pin belongs to its conversation, and survives a reload with it.
+    page.reload(wait_until="load")
+    page.wait_for_function("() => !!window._PM")
+    page.wait_for_selector("#sceneModal", state="visible")
+    open_discuss(page)
+    page.wait_for_selector("#discussModelChip:not([hidden])")
+    page.wait_for_function(
+        "() => document.querySelector('#discussModelName').innerText === 'GPT-5.6-Luna'"
+    )
+
+
 def test_discuss_stop_recovers_when_codex_unloads_thread(page: Page, server: ProseviewServer):
     open_scene(page, server)
     open_discuss(page)

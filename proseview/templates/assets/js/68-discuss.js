@@ -405,6 +405,7 @@
 
         function openDiscuss(trigger, options) {
             options = options || {};
+            closeDiscussModelPicker();
             var doc = discussDocument();
             if (!doc) {
                 alert('Open a scene or supported text file before starting a discussion.');
@@ -482,6 +483,7 @@
                 // popover while the conversation request finishes.
                 document.getElementById('discussSend').disabled = false;
                 _markDiscussAgentTab(_discussAgent, false);
+                loadDiscussModelCatalog(_discussAgent);
                 loadDiscussAgentAvailability();
                 _pollInactiveDiscussAgent();
                 if (options.showSkills) loadDiscussSkills();
@@ -1039,7 +1041,7 @@
             });
             ['connection', 'conversation.reset', 'turn.queued', 'turn.cancelled', 'turn.preparing', 'turn.started', 'turn.completed', 'turn.idle', 'response.completed', 'progress.delta',
              'plan.updated', 'activity.updated', 'approval.requested', 'approval.resolved', 'approval.expired', 'task.ready', 'task.failed',
-             'task.updated', 'tasks.cleared', 'notice.dismissed', 'warning', 'error'].forEach(function(type) {
+             'task.updated', 'tasks.cleared', 'notice.dismissed', 'model.changed', 'warning', 'error'].forEach(function(type) {
                 source.addEventListener(type, function(event) {
                     if (type === 'connection') {
                         var detail = JSON.parse(event.data);
@@ -2138,6 +2140,7 @@
             if (newConversationHint.textContent !== unavailableReason) newConversationHint.textContent = unavailableReason;
             newConversationHint.hidden = !unavailableReason;
             log.setAttribute('aria-busy', snapshot.active_turn_id ? 'true' : 'false');
+            renderDiscussModelChip();
             renderDiscussTurnStatus(snapshot);
             restoreDiscussScroll(log, scrollState);
             if (_discussLastApproval) {
@@ -2930,6 +2933,319 @@
             cancel.onclick = function() { picker.hidden = true; document.getElementById('discussInput').focus(); };
             picker.appendChild(cancel); search.focus();
         }
+
+
+        // ---- Model picker --------------------------------------------------
+        // What the next turn runs as, chosen where the turn is typed. The
+        // choice belongs to this conversation: starting a new one goes back to
+        // the agent's own default, so an expensive setting picked for one hard
+        // question does not quietly become the standing cost of every later
+        // one. Both agents apply it from the next turn, never to the running
+        // one, and the chip says so rather than implying otherwise.
+        var _discussModelCatalogs = {codex: null, claude: null};
+        var _discussModelCatalogPending = {codex: false, claude: false};
+        var _discussModelPickerOpen = false;
+        var _discussModelBusy = false;
+
+        function discussModelSelection() {
+            var selection = (_discussSnapshot && _discussSnapshot.model) || {};
+            return {model: selection.model || '', effort: selection.effort || ''};
+        }
+
+        function discussModelCatalog() {
+            return _discussModelCatalogs[_discussAgent] || null;
+        }
+
+        function discussModelRow(catalog, modelId) {
+            if (!catalog || !modelId) return null;
+            var rows = catalog.models || [];
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].id === modelId) return rows[i];
+            }
+            return null;
+        }
+
+        function discussModelEfforts(catalog, modelId) {
+            var row = discussModelRow(catalog, modelId);
+            return (row && row.efforts) || [];
+        }
+
+        function loadDiscussModelCatalog(agent) {
+            agent = DISCUSS_AGENTS.indexOf(agent) >= 0 ? agent : _discussAgent;
+            if (_discussModelCatalogs[agent] || _discussModelCatalogPending[agent]) return;
+            _discussModelCatalogPending[agent] = true;
+            discussApi('/api/discuss/models', {agent: agent}).then(function(data) {
+                _discussModelCatalogs[agent] = data.catalog || null;
+                if (agent === _discussAgent) renderDiscussModelChip();
+            }).catch(function() {
+                // A roster Prosview could not read is not a roster to invent.
+                // The chip stays hidden and questions keep working on the
+                // agent's own default.
+                _discussModelCatalogs[agent] = null;
+            }).finally(function() {
+                _discussModelCatalogPending[agent] = false;
+            });
+        }
+
+        function renderDiscussModelChip() {
+            var chip = document.getElementById('discussModelChip');
+            if (!chip) return;
+            var catalog = discussModelCatalog();
+            if (!catalog) {
+                chip.hidden = true;
+                closeDiscussModelPicker();
+                return;
+            }
+            chip.hidden = false;
+            var selection = discussModelSelection();
+            var fallback = catalog.default || {};
+            var inherited = !selection.model && !selection.effort;
+            var row = discussModelRow(catalog, selection.model);
+            var name = selection.model
+                ? ((row && row.label) || selection.model)
+                : (fallback.label || fallback.model || 'Default');
+            var effort = selection.effort || (selection.model ? ((row && row.default_effort) || '') : (fallback.effort || ''));
+            chip.dataset.inherited = inherited ? 'true' : 'false';
+            document.getElementById('discussModelName').textContent = name;
+            var effortNode = document.getElementById('discussModelEffort');
+            effortNode.textContent = effort;
+            effortNode.previousElementSibling.hidden = !effort;
+            var snapshot = _discussSnapshot || {};
+            var reason = '';
+            if (snapshot.active_turn_id) reason = 'Wait for ' + discussAgentLabel() + ' to finish before changing model.';
+            else if (snapshot.active_request_id) reason = 'Wait for this question to start before changing model.';
+            _discussModelBusy = !!reason;
+            chip.disabled = _discussModelBusy;
+            chip.title = reason || (inherited
+                ? 'Following ' + (catalog.default.source || 'the agent default') + '. Click to choose a model.'
+                : 'Pinned to this conversation. Click to change.');
+            chip.setAttribute('aria-label', 'Model: ' + name + (effort ? ', effort ' + effort : '') + '. Change model');
+            if (_discussModelBusy) closeDiscussModelPicker();
+            if (_discussModelPickerOpen) renderDiscussModelPicker();
+        }
+
+        function renderDiscussModelPicker() {
+            var catalog = discussModelCatalog();
+            var list = document.getElementById('discussModelList');
+            var efforts = document.getElementById('discussModelEfforts');
+            if (!catalog || !list) return;
+            var selection = discussModelSelection();
+            // Choosing anything rebuilds both rows, which would drop a keyboard
+            // user back to the document. Remember where they were standing.
+            var active = document.activeElement;
+            var restore = active && active.dataset && (active.dataset.discussModel !== undefined
+                ? {kind: 'model', id: active.dataset.discussModel}
+                : (active.dataset.discussEffort ? {kind: 'effort', id: active.dataset.discussEffort} : null));
+            list.replaceChildren();
+            var rows = [{
+                id: '',
+                label: 'Follow ' + discussAgentLabel() + ' settings',
+                description: catalog.default.label
+                    ? (catalog.default.label + (catalog.default.effort ? ' · ' + catalog.default.effort : '')
+                       + ', from ' + (catalog.default.source || 'your own configuration'))
+                    : (catalog.default.source || 'Whatever this agent is configured to use'),
+                badge: 'Default'
+            }].concat(catalog.models || []);
+            rows.forEach(function(row) {
+                var option = document.createElement('button');
+                option.type = 'button';
+                option.className = 'discuss-model-option';
+                option.setAttribute('role', 'radio');
+                var checked = (row.id || '') === selection.model;
+                option.setAttribute('aria-checked', checked ? 'true' : 'false');
+                option.appendChild(elementWith('discuss-model-option-tick', checked ? '●' : ''));
+                var body = document.createElement('span');
+                body.style.minWidth = '0';
+                var name = document.createElement('strong');
+                name.textContent = row.label || row.id;
+                body.appendChild(name);
+                body.appendChild(elementWith('', row.description || ''));
+                option.appendChild(body);
+                if (row.badge) option.appendChild(elementWith('discuss-model-badge', row.badge));
+                else if (row.retiring) option.appendChild(elementWith('discuss-model-badge retiring', 'Retiring'));
+                else option.appendChild(document.createElement('span'));
+                option.dataset.discussModel = row.id || '';
+                option.onclick = function() { chooseDiscussModel(row.id || ''); };
+                list.appendChild(option);
+            });
+            var ladder = selection.model ? discussModelEfforts(catalog, selection.model) : [];
+            var describedBy = null;
+            efforts.replaceChildren();
+            // Always the full union, with this model's missing rungs greyed
+            // out: a row that silently loses its top entries hides the reason
+            // a cheaper model cannot think as hard.
+            discussModelEffortUnion(catalog).forEach(function(entry) {
+                var button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'discuss-model-effort-option';
+                button.textContent = entry.id;
+                var supported = !ladder.length ? false : ladder.some(function(row) { return row.id === entry.id; });
+                button.disabled = !supported;
+                var active = supported && selection.effort === entry.id;
+                button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                if (active) describedBy = entry.description || '';
+                if (entry.description) button.title = entry.description;
+                button.dataset.discussEffort = entry.id;
+                button.onclick = function() { chooseDiscussEffort(entry.id); };
+                efforts.appendChild(button);
+            });
+            if (restore) {
+                var again = restore.kind === 'model'
+                    ? list.querySelector('[data-discuss-model="' + CSS.escape(restore.id) + '"]')
+                    : efforts.querySelector('[data-discuss-effort="' + CSS.escape(restore.id) + '"]:not(:disabled)');
+                if (again) again.focus();
+            }
+            document.getElementById('discussModelEffortDesc').textContent = selection.model
+                ? (describedBy || 'Model default')
+                : 'Set by your ' + discussAgentLabel() + ' configuration';
+            var foot = document.getElementById('discussModelFoot');
+            if (_discussModelNote) {
+                foot.textContent = _discussModelNote;
+                foot.dataset.kind = 'warning';
+            } else {
+                foot.dataset.kind = 'info';
+                foot.textContent = selection.model
+                    ? 'Pinned to this conversation, from your next message on.'
+                    : 'Prosview sends no model, so ' + discussAgentLabel() + ' uses its own configuration.';
+            }
+        }
+
+        // Codex advertises a different ladder per model, so the row shows every
+        // rung any model offers and greys out the ones this model does not.
+        function discussModelEffortUnion(catalog) {
+            var seen = Object.create(null);
+            var union = [];
+            (catalog.models || []).forEach(function(row) {
+                (row.efforts || []).forEach(function(entry) {
+                    if (seen[entry.id]) return;
+                    seen[entry.id] = true;
+                    union.push(entry);
+                });
+            });
+            return union;
+        }
+
+        var _discussModelNote = '';
+
+        function saveDiscussModel(selection, note) {
+            if (!_discussConversationId) return;
+            _discussModelNote = note || '';
+            if (_discussSnapshot) _discussSnapshot.model = {model: selection.model, effort: selection.effort};
+            renderDiscussModelChip();
+            if (_discussModelPickerOpen) renderDiscussModelPicker();
+            discussApi(
+                '/api/discuss/conversations/' + encodeURIComponent(_discussConversationId) + '/model',
+                {model: selection.model, effort: selection.effort}
+            ).then(function(data) {
+                if (_discussSnapshot) _discussSnapshot.model = data.model || {model: '', effort: ''};
+                renderDiscussModelChip();
+                document.getElementById('discussAnnouncement').textContent =
+                    'Model set to ' + document.getElementById('discussModelName').textContent
+                    + (selection.effort ? ' at ' + selection.effort + ' effort' : '');
+            }).catch(function(error) {
+                renderDiscussError(error.message);
+                scheduleDiscussSnapshot();
+            });
+        }
+
+        function chooseDiscussModel(modelId) {
+            var catalog = discussModelCatalog();
+            if (!catalog) return;
+            var selection = discussModelSelection();
+            if (!modelId) {
+                saveDiscussModel({model: '', effort: ''}, '');
+                return;
+            }
+            var ladder = discussModelEfforts(catalog, modelId);
+            // Carry forward whatever the chip was showing, including an effort
+            // that came from the agent's own configuration: picking a model
+            // should not quietly change how hard it thinks, and leaving it
+            // unpinned would leave the chip claiming an effort nobody sent.
+            var effort = selection.effort || (catalog.default && catalog.default.effort) || '';
+            var supported = ladder.some(function(entry) { return entry.id === effort; });
+            var note = '';
+            if (!effort) {
+                effort = '';
+            } else if (!supported) {
+                // Keep the writer's intent -- they asked for the hardest
+                // thinking this model has -- rather than silently dropping to
+                // the model's own default.
+                var wanted = effort;
+                effort = ladder.length ? ladder[ladder.length - 1].id : '';
+                var row = discussModelRow(catalog, modelId);
+                note = wanted + ' is not available on ' + ((row && row.label) || modelId)
+                    + (effort ? ' — using ' + effort + '.' : '.');
+            }
+            saveDiscussModel({model: modelId, effort: effort}, note);
+        }
+
+        function chooseDiscussEffort(effortId) {
+            var selection = discussModelSelection();
+            if (!selection.model) return;
+            saveDiscussModel({model: selection.model, effort: effortId}, '');
+        }
+
+        function toggleDiscussModelPicker() {
+            if (_discussModelPickerOpen) {
+                closeDiscussModelPicker();
+                return;
+            }
+            var catalog = discussModelCatalog();
+            if (!catalog || _discussModelBusy) return;
+            _discussModelNote = '';
+            _discussModelPickerOpen = true;
+            document.getElementById('discussModelPicker').hidden = false;
+            document.getElementById('discussModelChip').setAttribute('aria-expanded', 'true');
+            renderDiscussModelPicker();
+            var first = document.querySelector('#discussModelList .discuss-model-option[aria-checked="true"]')
+                || document.querySelector('#discussModelList .discuss-model-option');
+            if (first) first.focus();
+        }
+
+        function closeDiscussModelPicker(options) {
+            if (!_discussModelPickerOpen) return;
+            _discussModelPickerOpen = false;
+            _discussModelNote = '';
+            var picker = document.getElementById('discussModelPicker');
+            if (picker) picker.hidden = true;
+            var chip = document.getElementById('discussModelChip');
+            if (chip) {
+                chip.setAttribute('aria-expanded', 'false');
+                if (options && options.focus && !chip.hidden && !chip.disabled) chip.focus();
+            }
+        }
+
+        // mousedown, not click: choosing an option rebuilds the list, so by the
+        // time a click bubbles to the document its target is detached and no
+        // longer answers closest() -- which dismissed the picker on every
+        // selection made inside it.
+        document.addEventListener('mousedown', function(event) {
+            if (!_discussModelPickerOpen) return;
+            if (event.target.closest && event.target.closest('.discuss-model-wrap')) return;
+            closeDiscussModelPicker();
+        });
+
+        // Only while the picker is open: the dock otherwise leaves Escape to
+        // whatever the writer is inside, and an always-on handler would steal
+        // the key from the editor underneath.
+        document.addEventListener('keydown', function(event) {
+            if (!_discussModelPickerOpen || event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeDiscussModelPicker({focus: true});
+        });
+
+        document.getElementById('discussModelPicker').addEventListener('keydown', function(event) {
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+            var options = Array.prototype.slice.call(
+                this.querySelectorAll('.discuss-model-option, .discuss-model-effort-option:not(:disabled)')
+            );
+            var index = options.indexOf(document.activeElement);
+            if (index < 0) return;
+            event.preventDefault();
+            var step = event.key === 'ArrowDown' ? 1 : options.length - 1;
+            options[(index + step) % options.length].focus();
+        });
 
         function discussMentionAtCaret() {
             var input = document.getElementById('discussInput');

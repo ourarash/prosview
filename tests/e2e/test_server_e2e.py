@@ -134,6 +134,68 @@ def test_discuss_http_flow_is_document_aware_private_and_idempotent(server: Pros
     assert records[-1]["params"]["sandboxPolicy"] == {"type": "workspaceWrite", "networkAccess": False}
 
 
+def test_discuss_model_choice_reaches_the_agent_and_defaults_to_its_own_configuration(
+    server: ProseviewServer, fake_home: Path
+):
+    """The picker's promise, end to end: nothing sent until something is pinned."""
+    headers = _discuss_headers(server)
+    catalog = server.post_json("/api/discuss/models", {"agent": "codex"}, headers=headers).json()["catalog"]
+    assert [row["id"] for row in catalog["models"]] == ["gpt-5.6-sol", "gpt-5.6-luna"]
+    assert catalog["default"] == {
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "source": "Codex settings (~/.codex/config.toml)",
+        "label": "GPT-5.6-Sol",
+    }
+    # Luna's ladder stops short of Sol's, which is what makes the effort row
+    # a property of the selected model rather than a fixed list.
+    assert [e["id"] for e in catalog["models"][1]["efforts"]] == ["low", "medium", "high"]
+
+    conversation_id = server.post_json(
+        "/api/discuss/conversations/open", {"kind": "scene", "path": SCENE_REL}, headers=headers
+    ).json()["conversation_id"]
+
+    server.post_json(
+        f"/api/discuss/conversations/{conversation_id}/questions",
+        {"client_request_id": "unpinned", "question": "Ask on the default"},
+        headers=headers,
+    )
+    _wait_discuss(server, conversation_id, lambda value: any(m["role"] == "assistant" for m in value["messages"]))
+    records = [json.loads(line) for line in (fake_home / "fake-codex-received.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert "model" not in records[-1]["params"]
+    assert "effort" not in records[-1]["params"]
+
+    refused = server.post_json(
+        f"/api/discuss/conversations/{conversation_id}/model",
+        {"model": "gpt-5.6-luna", "effort": "turbo"},
+        headers=headers,
+    )
+    assert refused.status == 400
+
+    pinned = server.post_json(
+        f"/api/discuss/conversations/{conversation_id}/model",
+        {"model": "gpt-5.6-luna", "effort": "high"},
+        headers=headers,
+    )
+    assert pinned.status == 200
+    assert pinned.json()["model"] == {"model": "gpt-5.6-luna", "effort": "high"}
+    snapshot = server.get_json(f"/api/discuss/conversations/{conversation_id}/snapshot")["snapshot"]
+    assert snapshot["model"] == {"model": "gpt-5.6-luna", "effort": "high"}
+
+    server.post_json(
+        f"/api/discuss/conversations/{conversation_id}/questions",
+        {"client_request_id": "pinned", "question": "Ask on Luna"},
+        headers=headers,
+    )
+    _wait_discuss(
+        server, conversation_id,
+        lambda value: len([m for m in value["messages"] if m["role"] == "assistant"]) == 2,
+    )
+    records = [json.loads(line) for line in (fake_home / "fake-codex-received.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert records[-1]["params"]["model"] == "gpt-5.6-luna"
+    assert records[-1]["params"]["effort"] == "high"
+
+
 def test_a_preset_may_write_only_when_it_was_asked_to_change_something(server: ProseviewServer, fake_home: Path):
     headers = _discuss_headers(server)
     opened = server.post_json(

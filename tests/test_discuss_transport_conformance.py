@@ -408,3 +408,87 @@ def test_the_two_doubles_really_speak_different_protocols():
     assert not codex_content & claude_content, (
         "the doubles emit the same methods, so the translators are not being exercised"
     )
+
+
+# --- model selection ----------------------------------------------------------
+
+def test_the_roster_and_the_agents_own_default_are_reported(session):
+    """Both transports publish a catalog; only the second question differs."""
+    catalog = session.manager.list_models(session.agent)
+    assert catalog["agent"] == session.agent
+    assert catalog["models"], "an agent that answers model/list has models to offer"
+    first = catalog["models"][0]
+    assert first["id"] and first["label"]
+    assert [entry["id"] for entry in first["efforts"]], "each model advertises its own effort ladder"
+    # Codex keeps its resolved configuration behind config/read and Claude
+    # answers it inline; the manager must produce the same shape either way.
+    assert catalog["default"]["model"]
+    assert catalog["default"]["effort"]
+    assert catalog["default"]["source"]
+    assert catalog["default"]["label"]
+
+
+def test_an_unpinned_conversation_sends_no_model(session):
+    """Sending nothing is what makes the agent resolve its own configuration."""
+    session.manager.submit(session.cid, client_request_id="q1", question="A question")
+    _wait_for_settled_answer(session)
+    params = session.client.turn_params[0]
+    assert "model" not in params
+    assert "effort" not in params
+
+
+def test_a_pinned_model_reaches_the_next_turn(session):
+    catalog = session.manager.list_models(session.agent)
+    chosen = catalog["models"][-1]
+    effort = chosen["efforts"][0]["id"]
+    session.manager.set_model(session.cid, {"model": chosen["id"], "effort": effort})
+    assert session.snapshot()["model"] == {"model": chosen["id"], "effort": effort}
+
+    session.manager.submit(session.cid, client_request_id="q1", question="A question")
+    _wait_for_settled_answer(session)
+    params = session.client.turn_params[0]
+    assert params["model"] == chosen["id"]
+    assert params["effort"] == effort
+
+
+def test_a_pin_chosen_before_the_first_question_still_applies(session):
+    """The choice belongs to the conversation, not to a thread that exists yet."""
+    session.manager.set_model(session.cid, {"model": "", "effort": "low"})
+    session.manager.submit(session.cid, client_request_id="q1", question="A question")
+    _wait_for_settled_answer(session)
+    assert session.client.turn_params[0]["effort"] == "low"
+    assert "model" not in session.client.turn_params[0]
+
+
+def test_a_pin_survives_reopening_the_conversation(session):
+    session.manager.set_model(session.cid, {"model": "", "effort": "high"})
+    session.manager.submit(session.cid, client_request_id="q1", question="Remember my model")
+    _wait_for_settled_answer(session)
+    thread_id = session.manager.list_conversations(session.cid)["conversations"][0]["thread_id"]
+
+    session.manager.new_conversation(session.cid)
+    assert session.snapshot()["model"] == {"model": "", "effort": ""}, (
+        "a new conversation starts from the agent's own default again"
+    )
+    session.manager.open_conversation(session.cid, thread_id)
+    assert session.snapshot()["model"] == {"model": "", "effort": "high"}
+
+
+def test_an_unusable_choice_is_refused_rather_than_stored(session):
+    with pytest.raises(ContextError):
+        session.manager.set_model(session.cid, {"model": "", "effort": "turbo"})
+    with pytest.raises(ContextError):
+        session.manager.set_model(session.cid, {"model": "gpt-5.6-sol; rm -rf /", "effort": ""})
+    with pytest.raises(ContextError):
+        session.manager.set_model(session.cid, {"model": "m" * 200, "effort": ""})
+    assert session.snapshot()["model"] == {"model": "", "effort": ""}
+
+
+def test_changing_the_model_does_not_disturb_the_running_turn(session):
+    """The choice applies from the next turn, which is what the chip claims."""
+    session.client.hold_next_turn = True
+    session.manager.submit(session.cid, client_request_id="q1", question="A slow question")
+    _wait_for(lambda: session.snapshot()["active_turn_id"])
+    session.manager.set_model(session.cid, {"model": "", "effort": "low"})
+    assert "effort" not in session.client.turn_params[0]
+    assert session.snapshot()["active_turn_id"], "the running turn is untouched"

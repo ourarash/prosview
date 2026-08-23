@@ -54,6 +54,13 @@ REFACTOR_FINDINGS_MAX = 50
 REFACTOR_QUESTION_MAX = 512 * 1024
 CONVERSATION_RESET_LOCK_TIMEOUT = 3.0
 CONVERSATION_HISTORY_MAX = 50
+#: A model id is a catalog identifier, not free text. The bound is generous
+#: enough for any provider id and small enough that a malformed value cannot
+#: become a payload.
+MODEL_ID_MAX = 120
+#: Reasoning effort names both agents accept. Codex advertises its own ladder
+#: per model, so this is only the outer bound on what may be stored.
+EFFORT_VALUES = ("low", "medium", "high", "xhigh", "max", "ultra")
 #: Codex predates the second agent, so it keeps the unprefixed history keys and
 #: remains what an unqualified request means.
 DEFAULT_AGENT = "codex"
@@ -713,6 +720,29 @@ def _state_path() -> Path:
     return Path.home() / ".local" / "state" / "proseview" / "discuss.json"
 
 
+def normalized_model_selection(value: Any) -> dict[str, str]:
+    """Validate a stored or requested model choice.
+
+    Empty strings and ``None`` both mean *inherit*, which is the only way to
+    say "keep following the CLI's own default" once a choice has been made.
+    The effort ladder is checked against the outer bound rather than the
+    selected model's advertised list: the catalog is the agent's to change, and
+    refusing a value this process has not seen advertised would break a
+    conversation the moment a new rung appears.
+    """
+    if not isinstance(value, dict):
+        return {"model": "", "effort": ""}
+    model = str(value.get("model") or "").strip()
+    if len(model) > MODEL_ID_MAX:
+        raise ContextError(f"model id must be at most {MODEL_ID_MAX} characters")
+    if model and not re.fullmatch(r"[A-Za-z0-9._:@/+-]+", model):
+        raise ContextError("model id contains unsupported characters")
+    effort = str(value.get("effort") or "").strip().lower()
+    if effort and effort not in EFFORT_VALUES:
+        raise ContextError("unknown reasoning effort")
+    return {"model": model, "effort": effort}
+
+
 class DiscussStateStore:
     def __init__(self, root: Path, *, path: Path | None = None) -> None:
         self.root_key = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()
@@ -783,6 +813,12 @@ class DiscussStateStore:
                 updated_at = float(raw.get("updated_at") or created_at)
             except (TypeError, ValueError):
                 created_at = updated_at = 0.0
+            try:
+                model = normalized_model_selection(raw.get("model"))
+            except ContextError:
+                # A hand-edited or downgraded state file must not make a
+                # conversation unopenable; inheriting is always safe.
+                model = {"model": "", "effort": ""}
             rows.append({
                 "thread_id": thread_id,
                 "title": _bounded_text(raw.get("title") or "Previous conversation", 200),
@@ -790,6 +826,7 @@ class DiscussStateStore:
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "renamed": bool(raw.get("renamed")),
+                "model": model,
                 "documents": [dict(item) for item in (raw.get("documents") or [])
                               if isinstance(item, dict)
                               and item.get("kind") in {"scene", "file"}
@@ -934,6 +971,7 @@ class DiscussStateStore:
                     "created_at": now,
                     "updated_at": now,
                     "renamed": False,
+                    "model": {"model": "", "effort": ""},
                     "documents": [],
                 })
                 row = entry["threads"][0]
@@ -967,6 +1005,7 @@ class DiscussStateStore:
                     "created_at": now,
                     "updated_at": now,
                     "renamed": False,
+                    "model": {"model": "", "effort": ""},
                     "documents": [],
                 }
                 entry["threads"].append(row)
@@ -988,6 +1027,41 @@ class DiscussStateStore:
             if migrated:
                 self._write(data)
             return [dict(row) for row in entry["threads"]]
+
+    def model(self, kind: str, path: str, thread_id: str, agent: str = DEFAULT_AGENT) -> dict[str, str]:
+        """Return one conversation's pinned model, or the inherit marker."""
+        with self._lock:
+            data = self._load()
+            _agents, entry, _migrated = self._entry(data, kind, path, agent)
+            row = next((row for row in entry["threads"] if row["thread_id"] == thread_id), None)
+            if row is None:
+                return {"model": "", "effort": ""}
+            return dict(row.get("model") or {"model": "", "effort": ""})
+
+    def set_model(
+        self,
+        kind: str,
+        path: str,
+        thread_id: str,
+        selection: dict[str, str],
+        agent: str = DEFAULT_AGENT,
+    ) -> None:
+        """Pin a model to one conversation.
+
+        The choice belongs to the conversation rather than to the project: a
+        new conversation starts from the agent's own default again, so an
+        expensive setting chosen for one hard question cannot quietly become
+        the standing cost of every later one.
+        """
+        selection = normalized_model_selection(selection)
+        with self._lock:
+            data = self._load()
+            _agents, entry, _migrated = self._entry(data, kind, path, agent)
+            row = next((row for row in entry["threads"] if row["thread_id"] == thread_id), None)
+            if row is None:
+                return
+            row["model"] = dict(selection)
+            self._write(data)
 
     def clear_active(self, kind: str, path: str, agent: str = DEFAULT_AGENT) -> None:
         with self._lock:
@@ -1573,6 +1647,10 @@ class _Conversation:
         self.agent = agent
         self.thread_id: str | None = None
         self.thread_restored = False
+        # Empty strings mean "inherit": Prosview sends no model and no effort,
+        # and the agent's own configuration decides. A pinned choice belongs to
+        # this conversation and is persisted with its thread.
+        self.model_selection: dict[str, str] = {"model": "", "effort": ""}
         self.connection = "Restoring conversation"
         self.unavailable_reason = ""
         self.messages: list[dict[str, Any]] = []
@@ -1653,6 +1731,7 @@ class _Conversation:
                 "conversation_id": self.id,
                 "document": dict(self.document),
                 "agent": self.agent,
+                "model": dict(self.model_selection),
                 "connection": self.connection,
                 "unavailable_reason": self.unavailable_reason,
                 "messages": [dict(message) for message in self.messages],
@@ -1749,6 +1828,8 @@ class DiscussManager:
         # within the agent that issued it.
         self._threads: dict[str, _Conversation] = {}
         self._task_context: dict[str, dict[str, dict[str, Any]]] = {}
+        # Model catalogs, per agent, with the reading's monotonic timestamp.
+        self._model_catalogs: dict[str, tuple[float, dict[str, Any]]] = {}
         # Built from the character files once, then reused: the repeats pass
         # needs to know which names are the story's own vocabulary.
         self._content_stopwords: set[str] | None = None
@@ -1928,6 +2009,9 @@ class DiscussManager:
                                 self._threads[self._thread_key(conversation.agent, restored_id)] = conversation
                                 if stored != restored_id:
                                     self.state.set(normalized["kind"], normalized["path"], restored_id, conversation.agent)
+                                conversation.model_selection = self.state.model(
+                                    normalized["kind"], normalized["path"], restored_id, conversation.agent
+                                )
                                 if not local_work:
                                     row = next((
                                         item for item in self.state.list(
@@ -2260,6 +2344,132 @@ class DiscussManager:
             self._content_stopwords = build_content_stopwords(self.root)
         _score, terms = top_repeated_content_words(text, self._content_stopwords)
         return terms
+
+    @staticmethod
+    def _model_default_source(agent: str) -> str:
+        """Name the file a writer would edit to change the unpinned default.
+
+        Naming the wrong file is worse than naming none: ``CODEX_HOME`` moves
+        the Codex one, and the Claude transport reports its own path because it
+        is the thing that read it.
+        """
+        if agent == "claude":
+            return "Claude Code settings"
+        home = os.environ.get("CODEX_HOME")
+        path = f"{home.rstrip('/')}/config.toml" if home else "~/.codex/config.toml"
+        return f"Codex settings ({path})"
+    #: The catalog moves upstream, and asking for it costs a round trip. A
+    #: short window keeps the picker responsive while still noticing an edit
+    #: the writer made to their CLI configuration a minute ago.
+    MODEL_CATALOG_TTL = 60.0
+
+    def list_models(self, agent: str = DEFAULT_AGENT) -> dict[str, Any]:
+        """Report the models one agent offers, and what it defaults to.
+
+        The roster is the agent's to publish, not Prosview's to hardcode: both
+        transports answer ``model/list``, and the effort ladder arrives per
+        model because they genuinely differ -- one model's top rung is another
+        model's missing one.
+        """
+        agent = self.normalized_agent(agent)
+        cached = self._model_catalogs.get(agent)
+        if cached is not None and (time.monotonic() - cached[0]) < self.MODEL_CATALOG_TTL:
+            return json.loads(json.dumps(cached[1]))
+        client = self._client_for(agent)
+        payload = client.request("model/list", {"includeHidden": False})
+        models = [
+            row for row in (
+                self._normalized_model_row(raw) for raw in (payload.get("data") or [])
+                if isinstance(raw, dict)
+            ) if row is not None
+        ]
+        default = payload.get("default")
+        if not isinstance(default, dict):
+            # Codex's app-server publishes the catalog and the resolved
+            # configuration separately; a transport that answers both in one
+            # response is taken at its word.
+            default = self._configured_model_default(client)
+        catalog = {
+            "agent": agent,
+            "models": models,
+            "default": {
+                "model": _bounded_text(default.get("model"), MODEL_ID_MAX),
+                "effort": _bounded_text(default.get("effort"), 32).lower(),
+                "source": _bounded_text(default.get("source") or self._model_default_source(agent), 200),
+            },
+        }
+        catalog["default"]["label"] = next(
+            (row["label"] for row in models if row["id"] == catalog["default"]["model"]),
+            catalog["default"]["model"],
+        )
+        self._model_catalogs[agent] = (time.monotonic(), catalog)
+        return json.loads(json.dumps(catalog))
+
+    @staticmethod
+    def _normalized_model_row(raw: dict[str, Any]) -> dict[str, Any] | None:
+        model_id = _bounded_text(raw.get("id") or raw.get("model"), MODEL_ID_MAX).strip()
+        if not model_id:
+            return None
+        efforts: list[dict[str, str]] = []
+        for item in raw.get("supportedReasoningEfforts") or []:
+            if isinstance(item, str):
+                name, description = item, ""
+            elif isinstance(item, dict):
+                name = str(item.get("reasoningEffort") or "")
+                description = _bounded_text(item.get("description"), 200)
+            else:
+                continue
+            name = name.strip().lower()
+            if name and name in EFFORT_VALUES:
+                efforts.append({"id": name, "description": description})
+        upgrade = raw.get("upgradeInfo") if isinstance(raw.get("upgradeInfo"), dict) else {}
+        return {
+            "id": model_id,
+            "label": _bounded_text(raw.get("displayName") or model_id, 120),
+            "description": _bounded_text(raw.get("description"), 300),
+            "efforts": efforts,
+            "default_effort": _bounded_text(raw.get("defaultReasoningEffort"), 32).strip().lower(),
+            "catalog_default": bool(raw.get("isDefault")),
+            # A model the provider is retiring stays selectable; hiding the
+            # notice would make the eventual failure look like Prosview's.
+            "retiring": bool(raw.get("upgrade") or upgrade.get("model")),
+        }
+
+    @staticmethod
+    def _configured_model_default(client: Any) -> dict[str, str]:
+        """Read the agent's own resolved configuration, tolerating its absence."""
+        try:
+            config = client.request("config/read", {}).get("config") or {}
+        except Exception:  # noqa: BLE001
+            return {"model": "", "effort": ""}
+        if not isinstance(config, dict):
+            return {"model": "", "effort": ""}
+        return {
+            "model": str(config.get("model") or ""),
+            "effort": str(config.get("model_reasoning_effort") or ""),
+        }
+
+    def set_model(self, conversation_id: str, selection: dict[str, Any]) -> dict[str, Any]:
+        """Pin a model and effort to one conversation, from its next turn on.
+
+        Nothing about the running turn changes: both transports apply the
+        choice when the next turn starts, and pretending otherwise would put a
+        label on screen that does not match what produced the answer.
+        """
+        conversation = self._get(conversation_id)
+        chosen = normalized_model_selection(selection)
+        with conversation.lock:
+            previous = dict(conversation.model_selection)
+            conversation.model_selection = dict(chosen)
+            thread_id = conversation.thread_id
+            document = dict(conversation.document)
+        if thread_id:
+            self.state.set_model(
+                document["kind"], document["path"], thread_id, chosen, conversation.agent
+            )
+        if chosen != previous:
+            conversation.publish("model.changed", {"model": dict(chosen)})
+        return {"model": dict(chosen)}
 
     def list_actions(self) -> list[dict[str, Any]]:
         return [
@@ -2988,6 +3198,13 @@ class DiscussManager:
             self._threads[self._thread_key(conversation.agent, thread_id)] = conversation
             state_document = document or conversation.document
             self.state.set(state_document["kind"], state_document["path"], thread_id, conversation.agent)
+            # A model chosen before the first question belongs to the
+            # conversation that question starts, not to the one before it.
+            if conversation.model_selection.get("model") or conversation.model_selection.get("effort"):
+                self.state.set_model(
+                    state_document["kind"], state_document["path"], thread_id,
+                    conversation.model_selection, conversation.agent,
+                )
         return thread_id
 
     def _forget_thread(self, conversation: _Conversation) -> None:
@@ -3123,6 +3340,11 @@ class DiscussManager:
             self.state.activate(
                 conversation.document["kind"], conversation.document["path"], thread_id, conversation.agent
             )
+            # The pin belongs to the conversation being reopened, not to the
+            # one that happened to be on screen a moment ago.
+            conversation.model_selection = self.state.model(
+                conversation.document["kind"], conversation.document["path"], thread_id, conversation.agent
+            )
         finally:
             conversation.lock.release()
         conversation.publish("conversation.opened", {"thread_id": thread_id, "document": dict(conversation.document)})
@@ -3234,6 +3456,15 @@ class DiscussManager:
                         turn_params["outputSchema"] = queued.output_schema
                     if client.capabilities.get("reasoning_summary"):
                         turn_params["summary"] = "concise"
+                    # Sending nothing is what makes the agent resolve its own
+                    # configuration, so an unpinned conversation must not send
+                    # an empty string here.
+                    with conversation.lock:
+                        selection = dict(conversation.model_selection)
+                    if selection.get("model"):
+                        turn_params["model"] = selection["model"]
+                    if selection.get("effort"):
+                        turn_params["effort"] = selection["effort"]
                     try:
                         result = client.request("turn/start", turn_params)
                         break
@@ -3301,6 +3532,7 @@ class DiscussManager:
                 raise ContextError("conversation is busy; stop the active turn and wait for queued questions first")
             self._clear_active_thread(conversation)
             self._clear_projection(conversation)
+            conversation.model_selection = {"model": "", "effort": ""}
         finally:
             conversation.lock.release()
         conversation.publish("conversation.reset", {"document": dict(conversation.document)})

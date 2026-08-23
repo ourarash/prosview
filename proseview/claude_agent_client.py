@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
+import re
 import shutil
 import threading
 import time
@@ -64,6 +66,49 @@ MAX_SESSIONS = 8
 APPROVAL_TIMEOUT = 600.0
 DEFAULT_REQUEST_TIMEOUT = 15.0
 TURN_START_TIMEOUT = 60.0
+
+#: Reasoning effort the SDK accepts, weakest first. Unlike Codex, every model
+#: takes the same ladder, so the picker's effort row never changes shape.
+EFFORT_LADDER = ("low", "medium", "high", "xhigh", "max")
+
+#: Claude Code has no ``model/list`` to ask, so the roster is the set of
+#: aliases its CLI resolves. Aliases rather than dated ids on purpose: an alias
+#: keeps meaning the current model, which is what a writer picking "Opus"
+#: means, and a pinned dated id would quietly rot.
+MODEL_CATALOG = (
+    {
+        "id": "opus",
+        "displayName": "Opus 5",
+        "description": "Most capable. Long continuity sweeps and structural reads.",
+        "defaultReasoningEffort": "high",
+    },
+    {
+        "id": "sonnet",
+        "displayName": "Sonnet 5",
+        "description": "Balanced speed and depth. A good standing choice for line work.",
+        "defaultReasoningEffort": "medium",
+    },
+    {
+        "id": "fable",
+        "displayName": "Fable 5",
+        "description": "Tuned for prose and voice.",
+        "defaultReasoningEffort": "medium",
+    },
+    {
+        "id": "haiku",
+        "displayName": "Haiku 4.5",
+        "description": "Fastest and cheapest. Quick lookups and small rewrites.",
+        "defaultReasoningEffort": "low",
+    },
+)
+
+EFFORT_DESCRIPTIONS = {
+    "low": "Fast answers with little deliberation",
+    "medium": "Everyday balance of speed and depth",
+    "high": "Deeper reasoning for tangled questions",
+    "xhigh": "Extended reasoning for hard problems",
+    "max": "Maximum reasoning depth",
+}
 
 
 class ClaudeError(RuntimeError):
@@ -203,6 +248,11 @@ class _Session:
         #: True once a turn has run, so later turns resume the session rather
         #: than trying to name one that already exists.
         self.started = False
+        #: What this session's live client was actually connected with. The
+        #: model can be changed on a running session; the effort cannot, so a
+        #: change to it has to be noticed here and reconnected.
+        self.model = ""
+        self.effort = ""
         #: Set per turn. When an output schema is in play the JSON — not the
         #: model's prose — is the final answer.
         self.expects_structured = False
@@ -409,6 +459,7 @@ class ClaudeAgentClient:
             "turn/interrupt": self._handle_turn_interrupt,
             "thread/read": self._handle_thread_read,
             "skills/list": self._handle_skills_list,
+            "model/list": self._handle_model_list,
         }
         handler = handlers.get(method)
         if handler is None:
@@ -487,6 +538,59 @@ class ClaudeAgentClient:
             session.started = True
         return result
 
+    def _handle_model_list(self, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """Publish the roster in the shape Codex's ``model/list`` uses.
+
+        Answering the default here as well as the catalog is the difference
+        between the two transports: Codex keeps its resolved configuration
+        behind a second call, while this one already knows what an unpinned
+        turn will run as.
+        """
+        defaults = self.user_model_defaults()
+        rows = [
+            {
+                **row,
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": effort, "description": EFFORT_DESCRIPTIONS[effort]}
+                    for effort in EFFORT_LADDER
+                ],
+                "isDefault": row["id"] == (defaults.get("model") or ""),
+            }
+            for row in MODEL_CATALOG
+        ]
+        return {"data": rows, "default": defaults}
+
+    def user_model_defaults(self) -> dict[str, str]:
+        """Read the writer's configured model and effort, and nothing else.
+
+        Prosview starts Claude sessions with ``setting_sources`` unset, so this
+        file is deliberately not loaded: it can carry hooks and permission
+        allow-rules that would shadow the approval gate. Two scalar keys carry
+        none of that, and ignoring them would mean a writer who configured Opus
+        silently gets whatever the SDK defaults to instead.
+        """
+        path = Path(
+            os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")
+        ) / "settings.json"
+        try:
+            shown = "~/" + str(path.relative_to(Path.home()))
+        except ValueError:
+            shown = str(path)
+        source = f"Claude Code settings ({shown})"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {"model": "", "effort": "", "source": source}
+        if not isinstance(data, dict):
+            return {"model": "", "effort": "", "source": source}
+        model = str(data.get("model") or "").strip()
+        if len(model) > 120 or not re.fullmatch(r"[A-Za-z0-9._:@/+-]*", model):
+            model = ""
+        effort = str(data.get("effortLevel") or "").strip().lower()
+        if effort not in EFFORT_LADDER:
+            effort = ""
+        return {"model": model, "effort": effort, "source": source}
+
     def _handle_skills_list(self, params: dict[str, Any], timeout: float) -> dict[str, Any]:
         # Skills selection lands with the writer-facing milestone; advertising
         # an empty list keeps the picker honest rather than showing stale data.
@@ -517,6 +621,32 @@ class ClaudeAgentClient:
         except Exception:
             pass
 
+    def turn_model(self, params: dict[str, Any]) -> dict[str, str]:
+        """Resolve what one turn should run as.
+
+        A turn that names nothing falls back to the writer's own configuration
+        rather than to the SDK's built-in default, so "Default" in the picker
+        means what they configured.
+        """
+        defaults = self.user_model_defaults()
+        model = str(params.get("model") or "").strip() or defaults["model"]
+        effort = str(params.get("effort") or "").strip().lower() or defaults["effort"]
+        return {"model": model, "effort": effort if effort in EFFORT_LADDER else ""}
+
+    def _supports_effort(self) -> bool:
+        """Whether the installed SDK takes an effort level.
+
+        An older SDK rejects the keyword outright, and losing the effort
+        setting is a far better outcome than failing every turn.
+        """
+        if self._options_factory is not None:
+            return True
+        try:
+            from claude_agent_sdk import ClaudeAgentOptions
+        except ImportError:  # pragma: no cover - inspection already refused this
+            return False
+        return "effort" in getattr(ClaudeAgentOptions, "__annotations__", {})
+
     def _build_options(self, params: dict[str, Any], session: _Session) -> Any:
         async def pre_tool_use(input_data: dict[str, Any], tool_use_id: Any, context: Any):
             return await self._gate_tool(session, input_data)
@@ -535,6 +665,11 @@ class ClaudeAgentClient:
             ),
             "include_partial_messages": True,
         }
+        selection = self.turn_model(params)
+        if selection["model"]:
+            options["model"] = selection["model"]
+        if selection["effort"] and self._supports_effort():
+            options["effort"] = selection["effort"]
         instructions = params.get("developerInstructions") or session.thread_params.get(
             "developerInstructions"
         )
@@ -571,9 +706,42 @@ class ClaudeAgentClient:
 
     # --- turn execution ----------------------------------------------------
 
+    async def _apply_model_change(self, session: _Session, params: dict[str, Any]) -> None:
+        """Bring a live session in line with this turn's model and effort.
+
+        The two settings are not equally cheap. ``set_model`` changes a running
+        session in place, so switching model keeps the conversation's context.
+        Effort is fixed when the session connects, so a change to it has to
+        reconnect -- which resumes the same session id, and so is invisible
+        apart from the reconnect itself.
+        """
+        selection = self.turn_model(params)
+        if session.client is None:
+            session.model = selection["model"]
+            session.effort = selection["effort"]
+            return
+        if selection["effort"] != session.effort:
+            await self._disconnect(session)
+            session.model = selection["model"]
+            session.effort = selection["effort"]
+            return
+        if selection["model"] != session.model:
+            try:
+                await session.client.set_model(selection["model"] or None)
+            except Exception as exc:  # noqa: BLE001
+                # An SDK without live switching must not cost the writer their
+                # conversation; reconnecting applies the choice the slow way.
+                self._emit("error", {
+                    "threadId": session.thread_id,
+                    "message": _bounded(f"Reconnecting to change model: {exc}", 500),
+                })
+                await self._disconnect(session)
+            session.model = selection["model"]
+
     async def _start_turn(
         self, session: _Session, turn_id: str, prompt: str, params: dict[str, Any]
     ) -> None:
+        await self._apply_model_change(session, params)
         client = await self._ensure_session_client(session, params)
         session.turn_id = turn_id
         session.expects_structured = bool(params.get("outputSchema"))

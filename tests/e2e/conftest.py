@@ -497,6 +497,17 @@ for line in sys.stdin:
             {'name': 'tighten-prose', 'path': str(pathlib.Path(cwd) / '.proseview/skills' / 'tighten-prose' / 'SKILL.md'), 'enabled': True, 'description': 'Remove filler from selected prose.', 'interface': {'displayName': 'Tighten Prose', 'shortDescription': 'Remove filler from selected prose.'}, 'dependencies': {}},
             {'name': 'snippet-continuity', 'path': str(pathlib.Path(cwd) / '.proseview/skills' / 'snippet-continuity' / 'SKILL.md'), 'enabled': True, 'description': 'Check story continuity.', 'interface': {'displayName': 'Continuity Check', 'shortDescription': 'Flag contradictions with the story bible.'}, 'dependencies': {}}
         ], 'errors': []}]}})
+    elif method == 'model/list':
+        emit({'id': request_id, 'result': {'data': [
+            {'id': 'gpt-5.6-sol', 'displayName': 'GPT-5.6-Sol', 'description': 'Latest frontier agentic coding model.',
+             'supportedReasoningEfforts': [{'reasoningEffort': e, 'description': e + ' reasoning'} for e in ['low', 'medium', 'high', 'xhigh', 'max']],
+             'defaultReasoningEffort': 'medium', 'isDefault': True},
+            {'id': 'gpt-5.6-luna', 'displayName': 'GPT-5.6-Luna', 'description': 'Fast and affordable agentic coding model.',
+             'supportedReasoningEfforts': [{'reasoningEffort': e, 'description': e + ' reasoning'} for e in ['low', 'medium', 'high']],
+             'defaultReasoningEffort': 'medium', 'isDefault': False},
+        ]}})
+    elif method == 'config/read':
+        emit({'id': request_id, 'result': {'config': {'model': 'gpt-5.6-sol', 'model_reasoning_effort': 'xhigh'}}})
     elif method == 'turn/start':
         next_turn += 1
         turn_id = f'turn-{next_turn}'

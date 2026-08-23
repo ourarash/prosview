@@ -240,6 +240,47 @@ def test_state_store_recovers_from_malformed_json(tmp_path: Path, monkeypatch: p
     assert store.get("scene", "ch01/opening.md") == "thread-2"
 
 
+def test_state_store_keeps_a_model_choice_with_its_own_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The pin belongs to one conversation, not to the project or the document."""
+    root = _repo(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    store = DiscussStateStore(root)
+    store.set("scene", "ch01/opening.md", "thread-1")
+    store.set("scene", "ch01/opening.md", "thread-2")
+
+    store.set_model("scene", "ch01/opening.md", "thread-1", {"model": "gpt-5.6-luna", "effort": "high"})
+
+    assert store.model("scene", "ch01/opening.md", "thread-1") == {
+        "model": "gpt-5.6-luna", "effort": "high",
+    }
+    assert store.model("scene", "ch01/opening.md", "thread-2") == {"model": "", "effort": ""}
+    assert store.model("scene", "ch01/opening.md", "thread-1", "claude") == {"model": "", "effort": ""}
+    # A conversation that no longer exists is not a conversation to pin.
+    store.set_model("scene", "ch01/opening.md", "gone", {"model": "gpt-5.6-luna", "effort": ""})
+    assert store.model("scene", "ch01/opening.md", "gone") == {"model": "", "effort": ""}
+
+
+def test_state_store_refuses_an_unusable_model_and_survives_a_stored_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A hand-edited state file must not make a conversation unopenable."""
+    root = _repo(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    store = DiscussStateStore(root)
+    store.set("scene", "ch01/opening.md", "thread-1")
+
+    with pytest.raises(ContextError):
+        store.set_model("scene", "ch01/opening.md", "thread-1", {"model": "", "effort": "turbo"})
+
+    data = json.loads(store.path.read_text(encoding="utf-8"))
+    entry = data["repositories"][store.root_key]["agents"]["codex"]
+    entry["threads"][0]["model"] = {"model": "x" * 500, "effort": "turbo"}
+    store.path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert store.model("scene", "ch01/opening.md", "thread-1") == {"model": "", "effort": ""}
+    assert store.get("scene", "ch01/opening.md") == "thread-1"
+
+
 def test_state_store_is_project_scoped_and_isolates_repositories_and_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     one = _repo(tmp_path / "one")
