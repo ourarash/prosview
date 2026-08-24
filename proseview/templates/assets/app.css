@@ -6208,6 +6208,17 @@
             gap: 8px;
         }
 
+        /* The two actions that decide which version survives sit on their own
+           row, so a narrower dialog cannot reflow them in among the ones that
+           decide nothing. */
+        .scene-conflict-resolutions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-basis: 100%;
+        }
+
         .scene-conflict-actions button {
             border: 1px solid var(--border);
             border-radius: 7px;
@@ -6217,7 +6228,8 @@
             cursor: pointer;
         }
 
-        .scene-conflict-actions .scene-conflict-reload {
+        .scene-conflict-actions .scene-conflict-reload,
+        .scene-conflict-actions .scene-conflict-overwrite {
             border-color: var(--warning);
             color: var(--text-warning);
         }
@@ -7214,16 +7226,15 @@
         /* File History & Diff */
         .diff-modal {
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+            top: 10vh;
+            left: 5vw;
             width: 90vw;
-            max-width: 900px;
             height: 80vh;
-            max-height: 800px;
             z-index: 10000;
             display: flex;
             flex-direction: column;
+            resize: both;
+            overflow: hidden;
         }
 
         .diff-modal-content {

@@ -209,7 +209,7 @@
             return {content: serializeSceneEditorMarkdown(), base_mtime: _pmOpenMtime};
         }
 
-        function saveSceneEdit(onSaved, exitEditMode) {
+        function saveSceneEdit(onSaved, exitEditMode, overwrite) {
             if (!_pmView || !_pmEditMode) return;
             if (!_pmDirty) return;
             if (_pmSaveInFlight) return;
@@ -235,7 +235,14 @@
             fetch('/save-scene', {
                 method: 'POST',
                 headers: pvHeaders(),
-                body: JSON.stringify({ abs_path: absPath, content: markdown, open_mtime: _pmOpenMtime })
+                body: JSON.stringify({
+                    abs_path: absPath,
+                    content: markdown,
+                    open_mtime: _pmOpenMtime,
+                    // Set only by the conflict dialog's explicit "mine wins".
+                    // The server still backs up the version it replaces.
+                    overwrite: !!overwrite
+                })
             }).then(function(r) {
                 if (r.status === 409) {
                     _pmSaveInFlight = false;
@@ -252,6 +259,13 @@
                 _pmSaveInFlight = false;
                 if (!data.ok) { setPmDirty(true); return; }
                 if (data.mtime) _pmOpenMtime = data.mtime;
+                // meta is the baseline every later write reads: the next edit
+                // session and the annotation endpoints. refreshContent() would
+                // normally carry the new mtime in, but it is a no-op while the
+                // editor is open and never retries, so our own save has to
+                // advance it. Leaving it stale makes the *next* save look like
+                // someone else changed the file underneath us.
+                if (meta[p] && data.mtime) meta[p].mtime = data.mtime;
                 if (meta[p] && data.revision) meta[p].revision = data.revision;
                 contents[p] = markdown;
                 var liveMarkdown = serializeSceneEditorMarkdown();
@@ -260,6 +274,7 @@
                     return;
                 }
                 setPmSaved();
+                clearSceneConflictState();
                 if (typeof aiMarkAppliedProposalsSaved === 'function') aiMarkAppliedProposalsSaved();
                 var historyPane = document.getElementById('sceneHistoryPane');
                 if (historyPane && !historyPane.hidden && paths[curIdx] && typeof loadSceneHistory === 'function') {
@@ -290,12 +305,48 @@
             if (_pmView) _pmView.focus();
         }
 
+        function currentConflictDraft() {
+            // The writer may continue editing after the first 409. Use what is
+            // in the editor now, not the snapshot captured at conflict time, so
+            // no recovery action silently omits later work.
+            return (_pmEditMode && _pmView) ? serializeSceneEditorMarkdown() : (_pmConflictDraft || '');
+        }
+
+        function clearSceneConflictState() {
+            _pmConflictDraft = null;
+            var conflictButton = document.getElementById('sceneConflictReopen');
+            if (conflictButton) conflictButton.hidden = true;
+            var dialog = document.getElementById('sceneConflictDialog');
+            if (dialog && dialog.open) dialog.close('resolved');
+        }
+
+        function showConflictDiff() {
+            var p = paths[curIdx];
+            var absPath = meta[p] && meta[p].abs_path;
+            if (!absPath) return;
+            // A modal <dialog> renders in the top layer, so it would sit over
+            // the diff overlay. Close it; closeDiffModal() brings it back.
+            var dialog = document.getElementById('sceneConflictDialog');
+            if (dialog && dialog.open) dialog.close('show-diff');
+            openConflictDiffModal(absPath, currentConflictDraft());
+        }
+
+        function overwriteDiskWithConflictDraft() {
+            var dialog = document.getElementById('sceneConflictDialog');
+            if (dialog && dialog.open) dialog.close('overwrite');
+            var overlay = document.getElementById('diffModalOverlay');
+            if (overlay && !overlay.hidden) {
+                // Drop the conflict chrome first so closeDiffModal() does not
+                // read this as an unresolved conflict and reopen the dialog.
+                document.getElementById('diffModalOverwriteBtn').hidden = true;
+                closeDiffModal();
+            }
+            saveSceneEdit(null, false, true);
+        }
+
         function copyConflictDraft() {
             var status = document.getElementById('sceneConflictStatus');
-            // The writer may continue editing after the first 409. Copy what
-            // is in the editor now, not the snapshot captured at conflict
-            // time, so the recovery action cannot silently omit later work.
-            var draft = (_pmEditMode && _pmView) ? serializeSceneEditorMarkdown() : (_pmConflictDraft || '');
+            var draft = currentConflictDraft();
             var copied = function() { if (status) status.textContent = 'Draft copied to the clipboard.'; };
             var failed = function() { if (status) status.textContent = 'Clipboard access was unavailable. Keep editing to preserve the draft.'; };
             if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(draft).then(copied, failed);
@@ -306,9 +357,7 @@
             var p = paths[curIdx];
             var dialog = document.getElementById('sceneConflictDialog');
             if (dialog && dialog.open) dialog.close('reload-disk');
-            _pmConflictDraft = null;
-            var conflictButton = document.getElementById('sceneConflictReopen');
-            if (conflictButton) conflictButton.hidden = true;
+            clearSceneConflictState();
             cancelSceneEdit();
             refreshContent([p]);
         }
@@ -321,9 +370,7 @@
             if (typeof aiDiscardAppliedProposals === 'function') aiDiscardAppliedProposals();
             _pmEditMode = false;
             _pmSaveInFlight = false;
-            _pmConflictDraft = null;
-            var conflictButton = document.getElementById('sceneConflictReopen');
-            if (conflictButton) conflictButton.hidden = true;
+            clearSceneConflictState();
             setPmDirty(false);
             _applyEditingProseClass();
             hideInsertAffordance();

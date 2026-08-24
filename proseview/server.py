@@ -72,7 +72,7 @@ _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _ABS_PATH_ENDPOINTS: frozenset[str] = frozenset({
     "/insert-todo", "/edit-todo", "/delete-todo", "/delete-fm-todo",
     "/add-note", "/edit-note", "/delete-note",
-    "/save-scene", "/add-frontmatter",
+    "/save-scene", "/scene-diff", "/add-frontmatter",
 })
 
 
@@ -686,19 +686,12 @@ def _create_file_backup(resolved, old_raw: str, new_raw: str, source: str, repo_
                 pass
 
 
-def save_scene_content(
+def resolve_scene_write_target(
     abs_path: str,
-    content: str,
-    open_mtime: float,
     repo_root: str,
     manuscript_subdir: str = "manuscript",
-    source: str = "Manual Save",
-) -> None:
-    """Atomically replace the prose body of a scene file.
-
-    Validates the path is under manuscript/, detects concurrent edits via mtime,
-    recomputes the prose boundary from the live file, and writes atomically.
-    """
+) -> Path:
+    """The scene file *abs_path* names, refused if it sits outside the manuscript."""
     resolved = Path(abs_path).resolve()
     # Resolved, not joined: when the repo has no manuscript/ directory the whole
     # repo is the manuscript, and joining blindly would reject every save in a
@@ -706,12 +699,15 @@ def save_scene_content(
     manuscript_root = resolve_manuscript_dir(Path(repo_root), manuscript_subdir).resolve()
     if not resolved.is_relative_to(manuscript_root):
         raise PermissionError(f"Path outside manuscript directory: {abs_path}")
+    return resolved
 
-    current_mtime = resolved.stat().st_mtime
-    if abs(current_mtime - open_mtime) > 0.01:
-        raise _FileConflictError("File was modified since editor opened")
 
-    raw = read_repo_text(resolved)
+def compose_scene_raw(raw: str, content: str) -> str:
+    """Splice the editor's prose *content* into *raw*, keeping its header.
+
+    The prose boundary is recomputed from the live file rather than trusted from
+    the page, so frontmatter and any pre-prose header survive a save.
+    """
     _fm, body = split_frontmatter(raw)
     txt = extract_scene_text(body)
     prefix = txt.lstrip("\n")[:60]
@@ -720,13 +716,141 @@ def save_scene_content(
     header = "".join(raw.splitlines(keepends=True)[:offset])
 
     body_out = content if content.endswith("\n") else content + "\n"
-    new_raw = header + body_out
-    
+    return header + body_out
+
+
+def save_scene_content(
+    abs_path: str,
+    content: str,
+    open_mtime: float,
+    repo_root: str,
+    manuscript_subdir: str = "manuscript",
+    source: str = "Manual Save",
+    overwrite: bool = False,
+) -> None:
+    """Atomically replace the prose body of a scene file.
+
+    Validates the path is under manuscript/, detects concurrent edits via mtime,
+    recomputes the prose boundary from the live file, and writes atomically.
+
+    *overwrite* is the writer's explicit "mine wins" after seeing the conflict
+    diff: it skips the mtime guard only. The version being replaced still goes
+    through the same backup, so the discarded disk copy stays restorable from
+    scene history.
+    """
+    resolved = resolve_scene_write_target(abs_path, repo_root, manuscript_subdir)
+
+    if not overwrite:
+        current_mtime = resolved.stat().st_mtime
+        if abs(current_mtime - open_mtime) > 0.01:
+            raise _FileConflictError("File was modified since editor opened")
+
+    raw = read_repo_text(resolved)
+    new_raw = compose_scene_raw(raw, content)
+
     _create_file_backup(resolved, raw, new_raw, source, repo_root)
-    
+
     _atomic_write_text(resolved, new_raw)
 
 
+
+
+def render_scene_diff_html(
+    old_raw: str,
+    new_raw: str,
+    mode: str = "inline",
+    show_full: bool = False,
+) -> str:
+    """Render *old_raw* -> *new_raw* as the diff table the review modal shows.
+
+    Shared by scene history (an older backup against the file on disk) and
+    save conflicts (the file on disk against the draft in the editor), so a
+    writer reads both kinds of change in the same table.
+    """
+    import difflib
+
+    if mode == "side-by-side":
+        old_lines = old_raw.splitlines(keepends=True)
+        new_lines = new_raw.splitlines(keepends=True)
+        html_diff = difflib.HtmlDiff().make_table(old_lines, new_lines, context=not show_full, numlines=3)
+        html_diff = re.sub(r"<colgroup.*?</colgroup>", "", html_diff, flags=re.DOTALL | re.IGNORECASE)
+        return html_diff
+
+    old_lines = old_raw.splitlines(keepends=True)
+    new_lines = new_raw.splitlines(keepends=True)
+
+    diff_html = []
+    diff_html.append('<table class="diff diff-inline">')
+
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+    opcodes = sm.get_opcodes()
+
+    if not show_full and len(opcodes) == 1 and opcodes[0][0] == 'equal':
+        diff_html.append('<tr><td colspan="3" style="text-align:center; padding: 20px; color: var(--text-muted); font-style: italic;">No Differences Found</td></tr>')
+        opcodes = []
+
+    for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
+        if tag == 'equal':
+            if not show_full:
+                is_first = (idx == 0)
+                is_last = (idx == len(opcodes) - 1)
+                show_top = not is_first
+                show_bottom = not is_last
+                top_ctx = 3 if show_top else 0
+                bottom_ctx = 3 if show_bottom else 0
+
+                if (i2 - i1) > (top_ctx + bottom_ctx):
+                    for k in range(top_ctx):
+                        diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+                    hidden = (i2 - i1) - top_ctx - bottom_ctx
+                    diff_html.append(f'<tr><td class="diff_header">...</td><td class="diff_header">...</td><td style="text-align:center; color:var(--text-muted); font-size:12px; font-style:italic; background:var(--surface-bg);">... {hidden} unchanged lines ...</td></tr>')
+                    for k in range(i2-i1-bottom_ctx, i2-i1):
+                        diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+                else:
+                    for k in range(i2 - i1):
+                        diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+            else:
+                for k in range(i2 - i1):
+                    diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+        elif tag == 'delete':
+            for k in range(i2 - i1):
+                diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
+        elif tag == 'insert':
+            for k in range(j2 - j1):
+                diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{j1+k+1}</td><td class="diff_add" style="white-space:pre-wrap">{html_escape(new_lines[j1+k])}</td></tr>')
+        elif tag == 'replace':
+            old_text = "".join(old_lines[i1:i2])
+            new_text = "".join(new_lines[j1:j2])
+            old_words = re.findall(r"\S+|[^\S\n]+|\n", old_text)
+            new_words = re.findall(r"\S+|[^\S\n]+|\n", new_text)
+            wsm = difflib.SequenceMatcher(None, old_words, new_words)
+
+            old_html_lines = [[]]
+            new_html_lines = [[]]
+
+            for wtag, wi1, wi2, wj1, wj2 in wsm.get_opcodes():
+                if wtag in ('equal', 'delete', 'replace'):
+                    for w in old_words[wi1:wi2]:
+                        if w == '\n': old_html_lines.append([])
+                        else:
+                            if wtag == 'equal': old_html_lines[-1].append(html_escape(w))
+                            else: old_html_lines[-1].append(f'<del class="diff-delete">{html_escape(w)}</del>')
+                if wtag in ('equal', 'insert', 'replace'):
+                    for w in new_words[wj1:wj2]:
+                        if w == '\n': new_html_lines.append([])
+                        else:
+                            if wtag == 'equal': new_html_lines[-1].append(html_escape(w))
+                            else: new_html_lines[-1].append(f'<ins class="diff-insert">{html_escape(w)}</ins>')
+
+            for k in range(i2 - i1):
+                html_content = "".join(old_html_lines[k]) if k < len(old_html_lines) else ""
+                diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{html_content}</td></tr>')
+            for k in range(j2 - j1):
+                html_content = "".join(new_html_lines[k]) if k < len(new_html_lines) else ""
+                diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{j1+k+1}</td><td class="diff_add" style="white-space:pre-wrap">{html_content}</td></tr>')
+
+    diff_html.append('</table>')
+    return "".join(diff_html)
 
 
 class _AnnotationAnchorError(ValueError):
@@ -1755,91 +1879,8 @@ class _Handler(BaseHTTPRequestHandler):
                 old_raw = read_repo_text(scene_path)
                 new_raw = meta["content"]
                 
-                import difflib
-                
-                if mode == "side-by-side":
-                    old_lines = old_raw.splitlines(keepends=True)
-                    new_lines = new_raw.splitlines(keepends=True)
-                    html_diff = difflib.HtmlDiff().make_table(old_lines, new_lines, context=not show_full, numlines=3)
-                    html_diff = re.sub(r"<colgroup.*?</colgroup>", "", html_diff, flags=re.DOTALL | re.IGNORECASE)
-                    self._send_json({"ok": True, "diff_html": html_diff})
-                    return
-
-                old_lines = old_raw.splitlines(keepends=True)
-                new_lines = new_raw.splitlines(keepends=True)
-                
-                diff_html = []
-                diff_html.append('<table class="diff diff-inline">')
-                
-                sm = difflib.SequenceMatcher(None, old_lines, new_lines)
-                opcodes = sm.get_opcodes()
-                
-                if not show_full and len(opcodes) == 1 and opcodes[0][0] == 'equal':
-                    diff_html.append('<tr><td colspan="3" style="text-align:center; padding: 20px; color: var(--text-muted); font-style: italic;">No Differences Found</td></tr>')
-                    opcodes = []
-                
-                for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
-                    if tag == 'equal':
-                        if not show_full:
-                            is_first = (idx == 0)
-                            is_last = (idx == len(opcodes) - 1)
-                            show_top = not is_first
-                            show_bottom = not is_last
-                            top_ctx = 3 if show_top else 0
-                            bottom_ctx = 3 if show_bottom else 0
-                            
-                            if (i2 - i1) > (top_ctx + bottom_ctx):
-                                for k in range(top_ctx):
-                                    diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
-                                hidden = (i2 - i1) - top_ctx - bottom_ctx
-                                diff_html.append(f'<tr><td class="diff_header">...</td><td class="diff_header">...</td><td style="text-align:center; color:var(--text-muted); font-size:12px; font-style:italic; background:var(--surface-bg);">... {hidden} unchanged lines ...</td></tr>')
-                                for k in range(i2-i1-bottom_ctx, i2-i1):
-                                    diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
-                            else:
-                                for k in range(i2 - i1):
-                                    diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
-                        else:
-                            for k in range(i2 - i1):
-                                diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header">{j1+k+1}</td><td style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
-                    elif tag == 'delete':
-                        for k in range(i2 - i1):
-                            diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{html_escape(old_lines[i1+k])}</td></tr>')
-                    elif tag == 'insert':
-                        for k in range(j2 - j1):
-                            diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{j1+k+1}</td><td class="diff_add" style="white-space:pre-wrap">{html_escape(new_lines[j1+k])}</td></tr>')
-                    elif tag == 'replace':
-                        old_text = "".join(old_lines[i1:i2])
-                        new_text = "".join(new_lines[j1:j2])
-                        old_words = re.findall(r"\S+|[^\S\n]+|\n", old_text)
-                        new_words = re.findall(r"\S+|[^\S\n]+|\n", new_text)
-                        wsm = difflib.SequenceMatcher(None, old_words, new_words)
-                        
-                        old_html_lines = [[]]
-                        new_html_lines = [[]]
-                        
-                        for wtag, wi1, wi2, wj1, wj2 in wsm.get_opcodes():
-                            if wtag in ('equal', 'delete', 'replace'):
-                                for w in old_words[wi1:wi2]:
-                                    if w == '\n': old_html_lines.append([])
-                                    else:
-                                        if wtag == 'equal': old_html_lines[-1].append(html_escape(w))
-                                        else: old_html_lines[-1].append(f'<del class="diff-delete">{html_escape(w)}</del>')
-                            if wtag in ('equal', 'insert', 'replace'):
-                                for w in new_words[wj1:wj2]:
-                                    if w == '\n': new_html_lines.append([])
-                                    else:
-                                        if wtag == 'equal': new_html_lines[-1].append(html_escape(w))
-                                        else: new_html_lines[-1].append(f'<ins class="diff-insert">{html_escape(w)}</ins>')
-                        
-                        for k in range(i2 - i1):
-                            html_content = "".join(old_html_lines[k]) if k < len(old_html_lines) else ""
-                            diff_html.append(f'<tr><td class="diff_header">{i1+k+1}</td><td class="diff_header"></td><td class="diff_sub" style="white-space:pre-wrap">{html_content}</td></tr>')
-                        for k in range(j2 - j1):
-                            html_content = "".join(new_html_lines[k]) if k < len(new_html_lines) else ""
-                            diff_html.append(f'<tr><td class="diff_header"></td><td class="diff_header">{j1+k+1}</td><td class="diff_add" style="white-space:pre-wrap">{html_content}</td></tr>')
-                
-                diff_html.append('</table>')
-                self._send_json({"ok": True, "diff_html": "".join(diff_html)})
+                diff_html = render_scene_diff_html(old_raw, new_raw, mode, show_full)
+                self._send_json({"ok": True, "diff_html": diff_html})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
             return
@@ -2372,13 +2413,35 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
 
+        elif self.path == "/scene-diff":
+            # What saving would do to the file as it stands right now: the
+            # conflict dialog's "Show changes". Same renderer as scene history,
+            # so both kinds of change read the same way.
+            try:
+                target = resolve_scene_write_target(body["abs_path"], self.repo_root)
+                disk_raw = read_repo_text(target)
+                draft_raw = compose_scene_raw(disk_raw, body["content"])
+                diff_html = render_scene_diff_html(
+                    disk_raw,
+                    draft_raw,
+                    str(body.get("mode") or "inline"),
+                    str(body.get("context") or "changes") == "full",
+                )
+                self._send_json({"ok": True, "diff_html": diff_html})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
         elif self.path == "/save-scene":
             try:
+                # Overwriting is the writer's explicit choice after reading the
+                # diff, so the stale baseline they opened with is moot.
+                overwrite = bool(body.get("overwrite"))
                 save_scene_content(
                     body["abs_path"],
                     body["content"],
-                    float(body["open_mtime"]),
+                    float(body.get("open_mtime") or 0) if overwrite else float(body["open_mtime"]),
                     self.repo_root,
+                    source="Overwrote Disk Version" if overwrite else "Manual Save",
+                    overwrite=overwrite,
                 )
                 self.invalidate()
                 # Return the post-save mtime so the client can update its
@@ -2396,9 +2459,8 @@ class _Handler(BaseHTTPRequestHandler):
                     new_revision = None
                 self._send_json({"ok": True, "mtime": new_mtime, "revision": new_revision})
             except _FileConflictError:
+                # Shape is the documented contract; tests/e2e assert it exactly.
                 self._send_json({"conflict": True}, 409)
-            except _FileConflictError as exc:
-                self._send_json({"ok": False, "error": str(exc), "conflict": True}, 409)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
         else:

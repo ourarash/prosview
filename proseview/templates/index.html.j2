@@ -421,9 +421,9 @@
 
     <dialog id="sceneConflictDialog" class="scene-conflict-dialog" role="alertdialog" aria-labelledby="sceneConflictTitle" aria-describedby="sceneConflictDescription">
         <h2 id="sceneConflictTitle">Scene changed on disk</h2>
-        <p id="sceneConflictDescription">Your draft has not been saved or discarded. Choose whether to keep editing it, copy it for safekeeping, or reload the newer disk version.</p>
+        <p id="sceneConflictDescription">This scene changed on disk after you started editing, so saving would have replaced those changes without showing them to you. Your draft is still here and still unsaved.</p>
         <p id="sceneConflictStatus" class="scene-conflict-status" role="status" aria-live="polite"></p>
-        <div class="scene-conflict-actions"><button type="button" onclick="keepEditingAfterConflict()">Keep editing</button><button type="button" onclick="copyConflictDraft()">Copy draft</button><button type="button" class="scene-conflict-reload" onclick="reloadConflictDiskVersion()">Reload disk version</button></div>
+        <div class="scene-conflict-actions"><button type="button" onclick="showConflictDiff()">Show changes</button><button type="button" onclick="copyConflictDraft()">Copy draft</button><button type="button" onclick="keepEditingAfterConflict()">Keep editing</button><div class="scene-conflict-resolutions"><button type="button" class="scene-conflict-overwrite" onclick="overwriteDiskWithConflictDraft()">Overwrite disk version</button><button type="button" class="scene-conflict-reload" onclick="reloadConflictDiskVersion()">Reload disk version</button></div></div>
     </dialog>
 
 
@@ -890,7 +890,68 @@
             render();
         }
     </script>
+
+    <script>
+        function makeDraggable(modalId, headerSelector) {
+            const overlay = document.getElementById(modalId);
+            if (!overlay) return;
+            const modal = overlay.querySelector('.diff-modal');
+            const header = overlay.querySelector(headerSelector);
+            if (!modal || !header) return;
+            
+            header.style.cursor = 'move';
+            
+            let isDragging = false;
+            let startX, startY, initialLeft, initialTop;
+            
+            header.addEventListener('mousedown', function(e) {
+                // Don't drag if clicking buttons or inputs
+                if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'LABEL' || e.target.closest('button') || e.target.closest('label')) return;
+                
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                
+                const rect = modal.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                // Switch to absolute positioning if not already
+                modal.style.position = 'absolute';
+                modal.style.left = initialLeft + 'px';
+                modal.style.top = initialTop + 'px';
+                modal.style.transform = 'none'; // Clear any centering transforms just in case
+                modal.style.margin = '0';
+                
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+                
+                // Prevent text selection while dragging
+                e.preventDefault();
+            });
+            
+            function onMouseMove(e) {
+                if (!isDragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                modal.style.left = (initialLeft + dx) + 'px';
+                modal.style.top = (initialTop + dy) + 'px';
+            }
+            
+            function onMouseUp() {
+                isDragging = false;
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            makeDraggable('discussDiffModalOverlay', '.card-header');
+            makeDraggable('diffModalOverlay', '.card-header');
+        });
+    </script>
     <!-- Modals at the end of body to ensure they overlay everything -->
+
 
     <!-- Discuss Diff Modal -->
     <div id="discussDiffModalOverlay" class="modal-overlay" onclick="if(event.target === this) closeDiscussDiffModal()" hidden>
@@ -901,12 +962,16 @@
                     <p class="section-note" style="margin-top: 4px; margin-bottom: 0;">Review the changes proposed by the agent.</p>
                 </div>
                 <div style="display: flex; gap: 16px; align-items: center;">
+                    <label class="scene-toolbar-field" for="discussDiffFontSize" style="margin:0; border:none; padding:0; background:none;">
+                        <span style="font-size:13px; color:var(--text-muted);">Aa</span>
+                        <input id="discussDiffFontSize" type="range" min="12" max="36" value="18" oninput="updateDiscussDiffFontSize(this.value)" style="width: 80px;">
+                    </label>
                     <div class="diff-toggle-group">
-                        <button type="button" class="diff-toggle-btn active" id="discussDiffToggleInline" onclick="setDiscussDiffMode('inline')">
+                        <button type="button" class="diff-toggle-btn" id="discussDiffToggleInline" onclick="setDiscussDiffMode('inline')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
                             Inline
                         </button>
-                        <button type="button" class="diff-toggle-btn" id="discussDiffToggleSideBySide" onclick="setDiscussDiffMode('side-by-side')">
+                        <button type="button" class="diff-toggle-btn active" id="discussDiffToggleSideBySide" onclick="setDiscussDiffMode('side-by-side')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1"></rect><rect x="14" y="3" width="7" height="18" rx="1"></rect></svg>
                             Split
                         </button>
@@ -954,6 +1019,7 @@
             <div class="diff-modal-footer">
                 <button type="button" class="editor-btn" onclick="closeDiffModal()">Cancel</button>
                 <button type="button" class="primary-button" id="diffModalRestoreBtn">Confirm Restore</button>
+                <button type="button" class="primary-button" id="diffModalOverwriteBtn" onclick="overwriteDiskWithConflictDraft()" hidden>Overwrite disk version</button>
             </div>
         </div>
     </div>

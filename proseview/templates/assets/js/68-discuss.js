@@ -2667,12 +2667,29 @@ function createDiscussDiffViewer(diffString) {
 
 
 var _currentDiscussDiffString = null;
-var _currentDiscussDiffMode = 'inline';
+var _currentDiscussDiffMode = 'side-by-side';
+
+function updateDiscussDiffFontSize(size) {
+    var contentDiv = document.getElementById('discussDiffModalContent');
+    if (contentDiv) contentDiv.style.fontSize = size + 'px';
+    var slider = document.getElementById('discussDiffFontSize');
+    if (slider) slider.value = size;
+}
 
 function openDiscussDiffModal(diffString) {
     _currentDiscussDiffString = diffString;
     document.getElementById("discussDiffModalOverlay").hidden = false;
-    loadDiscussDiffMode(_currentDiscussDiffMode);
+    
+    // Set initial mode UI
+    setDiscussDiffMode(_currentDiscussDiffMode);
+    
+    // Initialize font size
+    var initialSize = 18;
+    try {
+        var stored = localStorage.getItem(MODAL_FONT_SIZE_STORAGE_KEY);
+        if (stored) initialSize = parseInt(stored, 10);
+    } catch(e) {}
+    updateDiscussDiffFontSize(initialSize);
 }
 
 function closeDiscussDiffModal() {

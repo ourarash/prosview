@@ -3339,6 +3339,108 @@ def test_conflict_recovery_preserves_draft_and_offers_explicit_disk_reload(
     assert path.read_text(encoding="utf-8").endswith("External version.\n")
 
 
+def test_second_edit_session_saves_without_a_false_conflict(
+    page: Page,
+    server: ProseviewServer,
+):
+    """Nobody else touched the file, so the writer must never see the dialog.
+
+    The first save moves the file's mtime. If the page keeps serving the
+    pre-save mtime as the baseline, the next edit session opens against a
+    stale one and its save is refused as someone else's change.
+    """
+    path = server.scene_path()
+    open_scene(page, server)
+
+    enter_edit_mode(page)
+    append_to_paragraph(page, "The loft smelled of cold coffee", " First pass.")
+    save_scene(page)
+    _wait_until(lambda: "First pass." in path.read_text(encoding="utf-8"), timeout=15,
+                message="first save never landed")
+
+    page.locator("#sceneEditBar .scene-edit-cancel").click()
+    page.wait_for_function("() => window._pmEditMode === false")
+
+    enter_edit_mode(page)
+    append_to_paragraph(page, "The loft smelled of cold coffee", " Second pass.")
+    save_scene(page)
+
+    _wait_until(lambda: "Second pass." in path.read_text(encoding="utf-8"), timeout=15,
+                message="second save never landed")
+    assert not page.get_by_role("alertdialog", name="Scene changed on disk").is_visible()
+
+
+def test_conflict_shows_the_diff_in_the_history_review_modal(
+    page: Page,
+    server: ProseviewServer,
+):
+    """"Show changes" answers "what actually differs?" before anything is lost."""
+    path = server.scene_path()
+    open_scene(page, server)
+    enter_edit_mode(page)
+    path.write_text(path.read_text(encoding="utf-8") + "\nExternal version.\n", encoding="utf-8")
+    append_to_paragraph(page, "The loft smelled of cold coffee", " Browser draft.")
+    save_scene(page)
+
+    conflict = page.get_by_role("alertdialog", name="Scene changed on disk")
+    conflict.wait_for(state="visible")
+    conflict.get_by_role("button", name="Show changes").click()
+
+    diff = page.locator("#diffModalOverlay")
+    diff.wait_for(state="visible")
+    page.wait_for_function(
+        "() => document.querySelector('#diffModalContent').innerText.includes('Browser draft.')"
+    )
+    diff_text = page.locator("#diffModalContent").inner_text()
+    assert "External version." in diff_text, "the disk version is not shown"
+    # Restoring an old backup and resolving a conflict are different acts.
+    assert page.locator("#diffModalRestoreBtn").is_hidden()
+    assert page.locator("#diffModalOverwriteBtn").is_visible()
+
+    # Closing the diff is not a decision, so the choice must come back.
+    page.locator("#diffModalOverlay").get_by_role("button", name="Cancel").click()
+    conflict.wait_for(state="visible")
+    assert "Browser draft." in _editor_text(page)
+    assert path.read_text(encoding="utf-8").endswith("External version.\n")
+
+
+def test_conflict_overwrite_keeps_the_draft_and_backs_up_the_disk_version(
+    page: Page,
+    server: ProseviewServer,
+):
+    """"Mine wins" must actually land, and must not destroy the other version."""
+    path = server.scene_path()
+    open_scene(page, server)
+    enter_edit_mode(page)
+    path.write_text(path.read_text(encoding="utf-8") + "\nExternal version.\n", encoding="utf-8")
+    append_to_paragraph(page, "The loft smelled of cold coffee", " Browser draft.")
+    save_scene(page)
+
+    conflict = page.get_by_role("alertdialog", name="Scene changed on disk")
+    conflict.wait_for(state="visible")
+    conflict.get_by_role("button", name="Overwrite disk version").click()
+
+    _wait_until(lambda: "Browser draft." in path.read_text(encoding="utf-8"), timeout=15,
+                message="the overwrite never reached disk")
+    on_disk = path.read_text(encoding="utf-8")
+    assert "External version." not in on_disk
+    conflict.wait_for(state="hidden")
+    assert page.get_by_role("button", name="Resolve save conflict").is_hidden()
+
+    # The overwritten version is recoverable rather than gone.
+    backups = list((server.root / ".proseview" / "backups").rglob("*.json"))
+    saved = [json.loads(b.read_text(encoding="utf-8")) for b in backups]
+    assert any("External version." in entry["content"] for entry in saved), \
+        "the replaced disk version was not written to scene history"
+
+    # The baseline is sound afterwards: a normal save still works.
+    append_to_paragraph(page, "The loft smelled of cold coffee", " After overwrite.")
+    save_scene(page)
+    _wait_until(lambda: "After overwrite." in path.read_text(encoding="utf-8"), timeout=15,
+                message="the save after an overwrite never landed")
+    assert page.get_by_role("alertdialog", name="Scene changed on disk").is_hidden()
+
+
 def test_conflict_recovery_copies_the_latest_draft_and_guards_scene_exit(
     page: Page,
     server: ProseviewServer,
@@ -6348,3 +6450,4 @@ def test_discuss_file_change_approval_renders_diff(page: Page, server: Proseview
     
     # Wait for it to be resolved
     page.wait_for_function("() => document.querySelector('#discussAnnouncement').innerText.includes('Approval accept')")
+

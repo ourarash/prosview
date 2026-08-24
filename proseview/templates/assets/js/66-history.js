@@ -1,3 +1,10 @@
+
+function updateHistoryDiffFontSize(size) {
+    var contentDiv = document.getElementById('diffModalContent');
+    if (contentDiv) contentDiv.style.fontSize = size + 'px';
+    var slider = document.getElementById('historyDiffFontSize');
+    if (slider) slider.value = size;
+}
 function loadSceneHistory(scenePath) {
     fetch(`/api/scene/history?path=${encodeURIComponent(scenePath)}`)
         .then(res => res.json())
@@ -52,15 +59,16 @@ function loadSceneHistory(scenePath) {
 let currentDiffScene = null;
 let currentDiffTs = null;
 
-let currentDiffMode = 'inline';
+let currentDiffMode = 'side-by-side';
 let currentDiffContext = 'changes';
+//: Re-opens whatever the modal is currently showing, so the inline/split and
+//: "show entire file" toggles work the same for history and for a conflict.
+let currentDiffReopen = null;
 
 function toggleDiffContext() {
     const showFull = document.getElementById("diffShowFull").checked;
     currentDiffContext = showFull ? 'full' : 'changes';
-    if (currentDiffScene && currentDiffTs) {
-        openDiffModal(currentDiffScene, currentDiffTs);
-    }
+    if (currentDiffReopen) currentDiffReopen();
 }
 
 function setDiffMode(mode) {
@@ -70,19 +78,26 @@ function setDiffMode(mode) {
     document.getElementById("diffToggleInline").classList.toggle("active", mode === "inline");
     document.getElementById("diffToggleSideBySide").classList.toggle("active", mode === "side-by-side");
     
-    if (currentDiffScene && currentDiffTs) {
-        openDiffModal(currentDiffScene, currentDiffTs);
-    }
+    if (currentDiffReopen) currentDiffReopen();
 }
 
-function openDiffModal(scenePath, timestamp) { console.log("openDiffModal called with", scenePath, timestamp);
-    currentDiffScene = scenePath;
-    currentDiffTs = timestamp;
-    
+function _showDiffModal(options) {
+    document.getElementById("diffModalTitle").textContent = options.title;
+    document.getElementById("diffModalSubtitle").textContent = options.subtitle;
+    document.getElementById("diffModalRestoreBtn").hidden = !options.restore;
+    document.getElementById("diffModalOverwriteBtn").hidden = !options.overwrite;
     document.getElementById("diffModalContent").innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading diff...</div>';
     document.getElementById("diffModalOverlay").hidden = false;
     
-    fetch(`/api/scene/history/diff?path=${encodeURIComponent(scenePath)}&timestamp=${encodeURIComponent(timestamp)}&mode=${encodeURIComponent(currentDiffMode)}&context=${encodeURIComponent(currentDiffContext)}`)
+    var initialSize = 18;
+    try {
+        var stored = localStorage.getItem(MODAL_FONT_SIZE_STORAGE_KEY);
+        if (stored) initialSize = parseInt(stored, 10);
+    } catch(e) {}
+    updateHistoryDiffFontSize(initialSize);
+
+    
+    options.load()
         .then(res => res.json())
         .then(data => {
             if (!data.ok) {
@@ -94,10 +109,53 @@ function openDiffModal(scenePath, timestamp) { console.log("openDiffModal called
         .catch(err => console.error("Diff fetch error:", err));
 }
 
+function openDiffModal(scenePath, timestamp) {
+    currentDiffScene = scenePath;
+    currentDiffTs = timestamp;
+    currentDiffReopen = () => openDiffModal(scenePath, timestamp);
+    
+    _showDiffModal({
+        title: "Review Changes",
+        subtitle: "Restoring this version will apply the following changes to the current file.",
+        restore: true,
+        overwrite: false,
+        load: () => fetch(`/api/scene/history/diff?path=${encodeURIComponent(scenePath)}&timestamp=${encodeURIComponent(timestamp)}&mode=${encodeURIComponent(currentDiffMode)}&context=${encodeURIComponent(currentDiffContext)}`)
+    });
+}
+
+function openConflictDiffModal(absPath, draft) {
+    currentDiffScene = null;
+    currentDiffTs = null;
+    currentDiffReopen = () => openConflictDiffModal(absPath, draft);
+    
+    _showDiffModal({
+        title: "Scene changed on disk",
+        subtitle: "Removed lines are the version on disk; added lines are your draft. Overwriting keeps the disk version in this scene's history.",
+        restore: false,
+        overwrite: true,
+        load: () => fetch('/scene-diff', {
+            method: 'POST',
+            headers: pvHeaders(),
+            body: JSON.stringify({
+                abs_path: absPath,
+                content: draft,
+                mode: currentDiffMode,
+                context: currentDiffContext
+            })
+        })
+    });
+}
+
 function closeDiffModal() {
+    const wasConflict = !document.getElementById("diffModalOverwriteBtn").hidden;
     document.getElementById("diffModalOverlay").hidden = true;
     currentDiffScene = null;
     currentDiffTs = null;
+    currentDiffReopen = null;
+    // Reading the diff is not a decision. Hand an unresolved conflict back to
+    // the dialog rather than dropping the writer into an editor they still
+    // cannot save from.
+    if (wasConflict && typeof openSceneConflictDialog === 'function') openSceneConflictDialog();
 }
 
 document.addEventListener("keydown", (e) => {
@@ -166,3 +224,4 @@ function clearSceneHistory() {
     })
     .catch(err => console.error("Clear history error:", err));
 }
+
