@@ -6328,9 +6328,20 @@ def test_discuss_file_change_approval_renders_diff(page: Page, server: Proseview
     diff_viewer = card.locator(".discuss-diff-viewer")
     diff_viewer.wait_for(state="visible")
     
-    # Verify the diff lines are present
-    assert diff_viewer.locator("div", has_text="-She had used the same four digits since spring.").is_visible()
-    assert diff_viewer.locator("div", has_text="+She had changed the four digits at the start of spring.").is_visible()
+    # Wait for async diff HTML to load, then verify the changed line content.
+    # The renderer uses HTML markup for replacements rather than literal +/- prefixes.
+    old_line = "She had used the same four digits since spring."
+    new_line = "She had changed the four digits at the start of spring."
+    page.wait_for_function(
+        """([selector, expected]) => {
+            const root = document.querySelector(selector);
+            if (!root) return false;
+            return root.textContent.includes(expected);
+        }""",
+        arg=[".discuss-approval .discuss-diff-viewer", old_line],
+    )
+    assert diff_viewer.locator("text=" + old_line).is_visible()
+    assert diff_viewer.locator("text=" + new_line).is_visible()
 
     # Accept the file change
     card.get_by_role("button", name="Accept once").click()
